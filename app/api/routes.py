@@ -1,0 +1,1 @@
+# 定义 /novel/stream (流式生成) 与 /novel/feedback (接收总编意见)

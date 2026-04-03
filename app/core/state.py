@@ -1,0 +1,1 @@
+# 定义 TomatoNovelState，包含草稿区与记忆区的状态管理
