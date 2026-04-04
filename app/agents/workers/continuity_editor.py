@@ -5,7 +5,7 @@
 
 import json
 from typing import Dict, Any
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage,AIMessage
 
 from app.core.llm_factory import get_llm
 
@@ -113,17 +113,16 @@ def continuity_editor_node(state: dict) -> Dict[str, Any]:
         # 判断打回条件：status 为 FAIL，或者一致性评分过低
         if status == "PASS" and consistency_score >= 0.8:
             print(f"✅ [Editor] 审查通过！草稿逻辑无懈可击。(一致性评分: {consistency_score})")
-            return {"editor_comments": "PASS"}
+            msg = AIMessage(content="[Editor] 逻辑审查通过，准备提交总编。", name="Editor")
+            return {"editor_comments": "PASS", "messages": [msg]}
         else:
             bugs_list = review_result.get("bug_reports", [])
             bugs = "\n".join([f"- {bug}" for bug in bugs_list]) if bugs_list else "- 发现未知的一致性异常。"
             suggestions = review_result.get("revision_suggestions", "无明确建议，请对照大纲自行检查。")
 
             final_comments = f"【审查未通过】(一致性评分: {consistency_score})\n【Bug列表】:\n{bugs}\n\n【修改建议】:\n{suggestions}"
-            print(f"❌ [Editor] 发现逻辑漏洞 (一致性评分: {consistency_score})，已打回给主笔返工！")
-
-            # 返回带有前缀维度的打回意见，这将被传给下一轮的 Chapter-Writer
-            return {"editor_comments": final_comments}
+            msg = AIMessage(content=final_comments, name="Editor")
+            return {"editor_comments": final_comments, "messages": [msg]}
 
     except json.JSONDecodeError as e:
         print(f"⚠️ [Editor] JSON 解析失败: {e}。原始输出：\n{content}\n为了防止死循环，本次审查默认打回重试。")

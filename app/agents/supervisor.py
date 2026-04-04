@@ -5,6 +5,7 @@
 # app/agents/supervisor.py
 
 from typing import Dict, Any
+from langchain_core.messages import HumanMessage, AIMessage
 
 
 def human_review_node(state: dict) -> Dict[str, Any]:
@@ -31,12 +32,14 @@ def human_review_node(state: dict) -> Dict[str, Any]:
 
     # 1. 人类直接批准入库
     if status == "APPROVED":
+        msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor")
         print(f"✅ [Supervisor] 总编已批准第 {chapter_num} 章定稿！流转至 Memory-Keeper 进行持久化。")
         return {
             "human_approval_status": "APPROVED",
             # 清空上一轮的反馈和内部报错，保持 State 干净
             "human_feedback": "",
-            "editor_comments": "PASS"
+            "editor_comments": "PASS",
+            "messages": [msg]
         }
 
     # 2. 人类打回并附加强指令覆盖 (Human Override)
@@ -44,16 +47,18 @@ def human_review_node(state: dict) -> Dict[str, Any]:
         if not feedback:
             feedback = "草稿质量不佳，请主笔重新构思并重写本章。"
 
-        print(f"🔥 [Supervisor] 触发最高级别打回重写！")
-        print(f"   [批注指令]: {feedback}")
-        print(f"   流转被截断，已将人类意图作为 Override Prompt 注入，准备重新唤醒 Chapter-Writer。")
+        override_msg = HumanMessage(
+            content=f"【人类总编最高指令】：{feedback}",
+            name="Human_Editor"
+        )
 
         # 借鉴 WriteHERE 的递归规划：不仅是“打回”，而是将人类逻辑注入下一次生成
         return {
             "human_approval_status": "REJECTED",
             "human_feedback": feedback,
             # 将内部 AI 审查的状态重置，因为现在是人类主导的重写逻辑
-            "editor_comments": "HUMAN_OVERRIDE_TRIGGERED"
+            "editor_comments": "HUMAN_OVERRIDE_TRIGGERED",
+            "messages": [override_msg]
         }
 
     # 3. 异常状态兜底（比如没有经过 UI 交互直接触发了）

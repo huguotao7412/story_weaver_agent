@@ -2,7 +2,7 @@
 
 import json
 from typing import Dict, Any
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage,AIMessage
 
 # 引入你的 LLM 工厂与配置项
 from app.core.llm_factory import get_llm
@@ -176,5 +176,11 @@ def plot_planner_node(state: dict) -> Dict[str, Any]:
 
     if state.get("current_chapter_num") is None:
         updates["current_chapter_num"] = current_chapter_num
+
+    summary_message = AIMessage(
+        content=f"[Plot-Planner] 已完成第 {current_chapter_num} 章的大纲规划。",
+        name="Plot_Planner"  # 给消息打上节点标签，方便调试
+    )
+    updates["messages"] = [summary_message]
 
     return updates

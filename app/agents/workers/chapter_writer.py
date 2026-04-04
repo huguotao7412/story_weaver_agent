@@ -3,7 +3,7 @@
 
 import json
 from typing import Dict, Any
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage,AIMessage
 from app.core.config import settings
 from app.memory.rag_engine import RAGEngine
 
@@ -55,6 +55,8 @@ def chapter_writer_node(state: dict) -> Dict[str, Any]:
     elif isinstance(target_style_obj, str) and target_style_obj.strip():
         style_guide = target_style_obj
 
+    messages_history = state.get("messages", [])
+
     # 2. 组装系统级 Prompt
     sys_prompt = WRITER_SYSTEM_PROMPT.format(
         world_bible=world_bible,
@@ -98,18 +100,27 @@ def chapter_writer_node(state: dict) -> Dict[str, Any]:
     # 这里推荐温度稍微高一点 (e.g., 0.7)，让文字更有网文的张力
     llm = get_llm(model_type="main", temperature=0.7)
 
+    recent_history = messages_history[-5:] if len(messages_history) > 5 else messages_history
+
     formatted_messages = [
-        SystemMessage(content=sys_prompt),
-        HumanMessage(content=instruction)
+        SystemMessage(content=sys_prompt)
     ]
+    formatted_messages.extend(recent_history)
+    formatted_messages.append(HumanMessage(content=instruction))
 
     response = llm.invoke(formatted_messages)
     new_draft = response.content.strip()
+
+    action_message = AIMessage(
+        content=f"[Chapter-Writer] 第 {state.get('current_chapter_num', 1)} 章正文草稿已生成，字数：{len(new_draft)}。",
+        name="Chapter_Writer"
+    )
 
     # 5. 更新状态区的草稿内容 (此时绝对不能入库，只留在隔离草稿区)
     # 同时，每次生成新的草稿后，清理掉之前的审查意见，准备迎接下一轮审查
     return {
         "draft_content": new_draft,
         "editor_comments": "",  # 重置内部审查状态
-        "human_approval_status": "PENDING"  # 重置人类审查状态为待定
+        "human_approval_status": "PENDING" , # 重置人类审查状态为待定
+        "messages": [action_message]
     }
