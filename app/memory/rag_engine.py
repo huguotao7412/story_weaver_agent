@@ -1,116 +1,165 @@
-# 世界观检索：基于 FAISS 提供设定查询
-# 🧠 RAG 检索引擎：基于 FAISS 管理长线历史剧情与世界观设定
 # app/memory/rag_engine.py
 
 import os
+import shutil
 from typing import List, Dict, Any
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from app.core.config import settings
-from app.core.llm_factory import get_llm, get_embeddings
+from app.core.llm_factory import get_embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class RAGEngine:
     """
-    小说全局事件与设定向量检索引擎。
-    负责将非结构化的历史剧情、长线伏笔持久化为向量，并在后续生成中提供检索。
+    🧠 百万字长篇专用：三层层级化向量检索引擎 (Hierarchical RAG)
+    Global(全局) -> Volume(分卷) -> Phase(单期)
     """
 
-    def __init__(self, persist_dir: str = None):
-        if persist_dir is None:
-            persist_dir = settings.FAISS_DB_PATH
+    def __init__(self, base_dir: str = None):
+        self.base_dir = base_dir or settings.FAISS_DB_PATH
 
-        self.persist_dir = persist_dir
-        # 确保 data 目录存在
-        os.makedirs(os.path.dirname(self.persist_dir), exist_ok=True)
+        # 🌟 为三层库分别建立独立的物理存储路径
+        self.global_dir = os.path.join(self.base_dir, "global_lore")
+        self.volume_dir = os.path.join(self.base_dir, "current_volume")
+        self.phase_dir = os.path.join(self.base_dir, "current_phase")
 
-        # 初始化 Embedding 模型
-        # 这里默认使用 OpenAI 的 text-embedding-3-small。如果您是纯本地环境，可换成 BAAI/bge-large-zh-v1.5
+        # 确保基础目录存在
+        os.makedirs(self.base_dir, exist_ok=True)
+
         self.embeddings = get_embeddings()
-
-        # 尝试加载已有的本地向量库，如果不存在则初始化为空
-        if os.path.exists(os.path.join(persist_dir, "index.faiss")):
-            print(f"📖 [RAG-Engine] 检测到本地历史剧情库，正在加载: {persist_dir}")
-            self.vector_store = FAISS.load_local(
-                persist_dir,
-                self.embeddings,
-                allow_dangerous_deserialization=True  # 信任本地文件时开启
-            )
-        else:
-            print("📖 [RAG-Engine] 未检测到历史库，初始化全新向量空间。")
-            self.vector_store = None
-
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=100,
-            # 优先按照段落和句子来切分，最大限度保留网文的语义连贯性
             separators=["\n\n", "\n", "。", "！", "？", "，", " ", ""]
         )
 
-    def insert_events(self, events: List[str], chapter_num: int):
-        """
-        供 Memory_Keeper 调用：将定稿章节的全局事件(Global Events)写入向量库
-        """
-        if not events:
-            return
+        # 加载或初始化三层向量空间
+        self.global_store = self._load_store(self.global_dir)
+        self.volume_store = self._load_store(self.volume_dir)
+        self.phase_store = self._load_store(self.phase_dir)
 
-        # 将纯文本事件封装为带 Metadata 的 Document 对象
-        documents = [
-            Document(
-                page_content=event,
-                metadata={"chapter": chapter_num, "type": "plot_event"}
-            ) for event in events
-        ]
+    # ==========================================
+    # 🛠️ 内部存储与加载辅助方法
+    # ==========================================
+    def _load_store(self, path):
+        """尝试加载本地 FAISS 索引"""
+        if os.path.exists(os.path.join(path, "index.faiss")):
+            return FAISS.load_local(path, self.embeddings, allow_dangerous_deserialization=True)
+        return None
 
+    def _save_store(self, store, path):
+        """持久化保存 FAISS 索引到硬盘"""
+        if store:
+            os.makedirs(path, exist_ok=True)
+            store.save_local(path)
+
+    def _add_documents_to_store(self, store, path, documents):
+        """通用向量切片与插入逻辑"""
         split_docs = self.text_splitter.split_documents(documents)
-
-        if self.vector_store is None:
-            # 首次插入，创建新的库
-            self.vector_store = FAISS.from_documents(documents, self.embeddings)
+        if store is None:
+            store = FAISS.from_documents(split_docs, self.embeddings)
         else:
-            # 追加到现有库
-            self.vector_store.add_documents(documents)
+            store.add_documents(split_docs)
+        self._save_store(store, path)
+        return store
 
-        # 立即持久化到本地 data 目录
-        self.vector_store.save_local(self.persist_dir)
-        print(f"   [RAG写入] 成功将 {len(events)} 条事件写入向量空间 (Chapter {chapter_num})")
-
+    # ==========================================
+    # ✍️ 写入方法：分类灌入三层库
+    # ==========================================
     def insert_world_bible(self, lore_entries: List[Dict[str, str]]):
-        """
-        【初始化阶段调用】：将世界观设定（如派系、地理、力量体系）灌入 RAG
-        格式示例：[{"title": "修仙境界", "content": "分为炼气、筑基、金丹..."}]
-        """
+        """【Global 库】仅供 Book-Planner 调用：写入世界观、核心设定、十卷总纲"""
         documents = [
-            Document(
-                page_content=f"【{lore['title']}】: {lore['content']}",
-                metadata={"type": "world_lore", "title": lore["title"]}
-            ) for lore in lore_entries
+            Document(page_content=f"【{lore['title']}】: {lore['content']}",
+                     metadata={"type": "world_lore", "level": "global"})
+            for lore in lore_entries
         ]
+        self.global_store = self._add_documents_to_store(self.global_store, self.global_dir, documents)
+        print("   [RAG写入] 已将设定法则灌入 🌍 Global 库。")
 
-        if self.vector_store is None:
-            self.vector_store = FAISS.from_documents(documents, self.embeddings)
+    def insert_global_events(self, events: List[str], chapter_num: int):
+        """【Global 库】供 Memory-Keeper 调用：写入对全书有影响的重大事件、生死大仇、长线伏笔"""
+        if not events: return
+        documents = [
+            Document(page_content=event, metadata={"chapter": chapter_num, "type": "global_event", "level": "global"})
+            for event in events
+        ]
+        self.global_store = self._add_documents_to_store(self.global_store, self.global_dir, documents)
+
+    def insert_chapter_details(self, events: List[str], chapter_num: int):
+        """【Volume & Phase 库】供 Memory-Keeper 调用：写入单章的详细动作、对话与微观剧情"""
+        if not events: return
+        documents = [
+            Document(page_content=event, metadata={"chapter": chapter_num, "type": "chapter_detail"})
+            for event in events
+        ]
+        # 单章日常细节同时灌入分卷库和单期库
+        self.volume_store = self._add_documents_to_store(self.volume_store, self.volume_dir, documents)
+        self.phase_store = self._add_documents_to_store(self.phase_store, self.phase_dir, documents)
+        print(f"   [RAG写入] 单章细节已灌入 📜 Volume 库与 🔍 Phase 库 (Chapter {chapter_num})。")
+
+    # ==========================================
+    # 🗑️ 遗忘/归档机制 (解决上下文污染)
+    # ==========================================
+    def reset_phase_store(self):
+        """
+        【清理 Phase 库】
+        触发时机：由 Phase-Planner 在开启“下一期”时调用。
+        效果：将上一期的细枝末节彻底遗忘。
+        """
+        self.phase_store = None
+        if os.path.exists(self.phase_dir):
+            shutil.rmtree(self.phase_dir)
+        print("🧹 [RAG-Engine] 【单期细节库】已清空，细枝末节已释放。")
+
+    def reset_volume_store(self):
+        """
+        【清理 Volume 库】
+        触发时机：由 Volume-Planner 在开启“下一卷”时调用。
+        效果：配合换地图，将上一卷的剧情细节彻底遗忘。
+        """
+        self.volume_store = None
+        if os.path.exists(self.volume_dir):
+            shutil.rmtree(self.volume_dir)
+        print("🧹 [RAG-Engine] 【分卷剧情库】已清空，准备迎接新卷地图。")
+
+    # ==========================================
+    # 🔭 立体联合检索机制
+    # ==========================================
+    def retrieve_context(self, query: str, k_global=2, k_volume=2, k_phase=2) -> str:
+        """
+        供下游 Planner 和 Editor 调用的层级化检索：
+        从全局、分卷、单期三个维度分别捞取知识，将返回结果严格分块，防止大模型认知混淆。
+        """
+        context_str = "【🌟 层级化 RAG 历史与设定参考】\n"
+
+        # 1. 检索全局库 (Global) - 优先级最高，用于校验世界观与大伏笔
+        context_str += "--- 🌍 全局法则与大事件 (Global Lore) ---\n"
+        if self.global_store:
+            global_results = self.global_store.similarity_search(query, k=k_global)
+            for i, doc in enumerate(global_results):
+                context_str += f"{i + 1}. {doc.page_content}\n"
         else:
-            self.vector_store.add_documents(documents)
+            context_str += "（暂无全局设定）\n"
 
-        self.vector_store.save_local(self.persist_dir)
+        # 2. 检索分卷库 (Volume) - 用于串联本卷的起承转合
+        context_str += "\n--- 📜 本卷宏观剧情 (Volume Plot) ---\n"
+        if self.volume_store:
+            volume_results = self.volume_store.similarity_search(query, k=k_volume)
+            for i, doc in enumerate(volume_results):
+                chapter = doc.metadata.get("chapter", "?")
+                context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
+        else:
+            context_str += "（暂无本卷历史）\n"
 
-    def retrieve_context(self, query: str, k: int = 3) -> str:
-        """
-        供 Plot_Planner 或 Chapter_Writer 调用：根据当前大纲的关键字，捞取历史伏笔
-        """
-        if self.vector_store is None:
-            return "（当前暂无长线历史剧情可供参考）"
-
-        # 执行相似度检索
-        results = self.vector_store.similarity_search(query, k=k)
-
-        if not results:
-            return "（检索未命中相关历史剧情）"
-
-        context_str = "【历史剧情/伏笔参考】：\n"
-        for i, doc in enumerate(results):
-            chapter = doc.metadata.get("chapter", "设定")
-            context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
+        # 3. 检索单期库 (Phase) - 用于精准接续上一章的具体场景和对话
+        context_str += "\n--- 🔍 本期微观细节 (Phase Detail) ---\n"
+        if self.phase_store:
+            phase_results = self.phase_store.similarity_search(query, k=k_phase)
+            for i, doc in enumerate(phase_results):
+                chapter = doc.metadata.get("chapter", "?")
+                context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
+        else:
+            context_str += "（暂无本期细节）\n"
 
         return context_str
