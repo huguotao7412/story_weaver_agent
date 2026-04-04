@@ -5,7 +5,9 @@
 import os
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage, SystemMessage
+
+# 🌟 新增导入 RemoveMessage 用于垃圾回收
+from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage
 
 from app.core.llm_factory import get_llm
 from app.memory.kv_tracker import KVTracker
@@ -66,6 +68,9 @@ def memory_keeper_node(state: dict) -> Dict[str, Any]:
     draft = state.get("draft_content", "")
     chapter_num = state.get("current_chapter_num", 1)
 
+    # 🌟 提取当前全量消息历史，准备后续清洗
+    messages = state.get("messages", [])
+
     if not draft:
         print("⚠️ [Memory-Keeper] 未检测到定稿内容，跳过记忆更新。")
         return {}
@@ -75,14 +80,14 @@ def memory_keeper_node(state: dict) -> Dict[str, Any]:
     # 🌟 核心改造：使用结构化输出引擎
     structured_llm = llm.with_structured_output(MemoryExtraction)
 
-    messages = [
+    prompt_messages = [
         SystemMessage(content=MEMORY_EXTRACTION_PROMPT),
         HumanMessage(content=f"【第 {chapter_num} 章定稿正文】：\n{draft}\n\n请提取状态变更。")
     ]
 
     try:
         # 直接获取 Pydantic 对象，彻底杜绝 JSON 解析错误
-        memory_updates: MemoryExtraction = structured_llm.invoke(messages)
+        memory_updates: MemoryExtraction = structured_llm.invoke(prompt_messages)
 
         # 初始化 KV 数据库追踪器
         tracker = KVTracker()
@@ -127,10 +132,22 @@ def memory_keeper_node(state: dict) -> Dict[str, Any]:
         except Exception as e:
             print(f"⚠️ [Memory-Keeper] 章节 Markdown 归档失败: {e}")
 
-        # 记忆更新完毕，重置人类审批状态，准备进入下一章流转
+        # 🌟 【新增核心修复】：上下文消息清洗 (Sliding Window / Cleanup)
+        # 本章定稿入库后，利用 RemoveMessage 删除除最后 2 条之外的所有旧消息
+        delete_messages = []
+        if len(messages) > 2:
+            # 遍历除了最后 2 条之外的所有历史消息
+            for msg in messages[:-2]:
+                if hasattr(msg, "id") and msg.id:  # 确保消息包含 id 才能被删除
+                    delete_messages.append(RemoveMessage(id=msg.id))
+
+        print(f"🧹 [Memory-Keeper] 触发垃圾回收，已清理 {len(delete_messages)} 条冗余对话，释放上下文显存。")
+
+        # 记忆更新完毕，重置人类审批状态，并触发 add_messages 的删除机制
         return {
             "human_approval_status": "PENDING",
-            "human_feedback": ""
+            "human_feedback": "",
+            "messages": delete_messages  # 注入需要删除的消息列表
         }
 
     except Exception as e:

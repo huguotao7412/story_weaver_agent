@@ -15,6 +15,9 @@ class TomatoNovelState(TypedDict):
     target_writing_style: dict
     world_bible_context: str  # FAISS 检索出的世界观与历史剧情快照
 
+    # 🌟 新增字段：宏观分卷故事树 (Macro Outline)，统领后续 10-30 章
+    macro_story_tree: str
+
     # 🌟 新增字段：基于大纲反向检索出的历史剧情/伏笔
     rag_history_context: str
 

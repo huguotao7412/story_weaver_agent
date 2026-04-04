@@ -1,19 +1,15 @@
 # 核心图编排：定义节点流转、双向循环与中断断点
 # 🕸️ 核心工作流图编排：LangGraph 两段式路由与人类在环
 # app/agents/graph.py
-import os
-import sqlite3
 from langgraph.graph import StateGraph, START, END
 from typing import Literal
-
-from langgraph.checkpoint.sqlite import SqliteSaver
-from app.core.config import settings
 
 # 导入核心状态结构
 from app.core.state import TomatoNovelState
 
 # 导入所有 Worker Nodes
-from app.agents.workers.plot_planner import plot_planner_node
+# 🌟 核心修改：导入新增的宏观规划节点
+from app.agents.workers.all_planner import plot_planner_node, macro_planner_node
 from app.agents.workers.chapter_writer import chapter_writer_node
 from app.agents.workers.continuity_editor import continuity_editor_node
 from app.agents.workers.memory_keeper import memory_keeper_node
@@ -66,47 +62,29 @@ def build_workflow() -> StateGraph:
     # 1. 初始化状态图
     workflow = StateGraph(TomatoNovelState)
 
-    # 2. 注册所有核心节点
+    # 2. 注册所有核心节点 (🌟 包含新加入的 Macro_Planner)
+    workflow.add_node("Macro_Planner", macro_planner_node)
     workflow.add_node("Plot_Planner", plot_planner_node)
     workflow.add_node("Chapter_Writer", chapter_writer_node)
     workflow.add_node("Editor", continuity_editor_node)
     workflow.add_node("Human_Review", human_review_node)
     workflow.add_node("Memory_Keeper", memory_keeper_node)
 
-    # 3. 定义常规流转边 (线性推进)
-    workflow.add_edge(START, "Plot_Planner")
+    # 3. 🌟 定义常规流转边：增加了宏观规划的层级
+    workflow.add_edge(START, "Macro_Planner")
+    workflow.add_edge("Macro_Planner", "Plot_Planner")
     workflow.add_edge("Plot_Planner", "Chapter_Writer")
     workflow.add_edge("Chapter_Writer", "Editor")
 
     # 4. === 第一阶段：内部 AI 互搏循环 (写与审的博弈) ===
     # Editor 审完后，根据结果分发
-    workflow.add_conditional_edges(
-        "Editor",
-        editor_router
-    )
+    workflow.add_conditional_edges("Editor",editor_router)
 
     # 5. === 第二阶段：外部人类决断循环 (一键入库还是大修打回) ===
     # Human Review 决策后，根据人类的意愿分发
-    workflow.add_conditional_edges(
-        "Human_Review",
-        human_review_router
-    )
+    workflow.add_conditional_edges("Human_Review",human_review_router)
 
     # 6. 入库完结，准备进入下一章节的循环
     workflow.add_edge("Memory_Keeper", END)
-    os.makedirs(settings.DATA_DIR, exist_ok=True)
-    db_path = os.path.join(settings.DATA_DIR, "checkpoints.sqlite")
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    memory = SqliteSaver(conn)
 
-    # 7. 🌟 编译图并设置“人类干预断点 (Breakpoints)”
-    # 这是最核心的一步：在执行到 Human_Review 节点前，系统强制挂起，等待前端 UI 注入人类的新状态
-    compiled_graph = workflow.compile(
-        checkpointer=memory,
-        interrupt_before=["Human_Review"])
-
-    return compiled_graph
-
-
-# 导出编译好的实例供 API / CLI 调用
-storyweaver_app = build_workflow()
+    return workflow
