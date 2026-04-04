@@ -1,0 +1,23 @@
+# === 核心编排引擎 ===
+langgraph>=0.2.0
+langchain-core>=0.2.0
+
+# === 模型基座接入 ===
+langchain-openai>=0.1.0      # 用于接入 GPT-4o, DeepSeek, GLM 等兼容 OpenAI 格式的模型
+langchain-anthropic>=0.1.0   # 用于接入 Claude 系列模型
+
+# === 数据结构与环境配置 ===
+pydantic>=2.0.0              # 用于构建协议 schemas
+pydantic-settings>=2.0.0     # 用于高级配置管理
+python-dotenv>=1.0.0         # 用于加载 .env 环境变量
+
+# === 记忆与存储层 ===
+faiss-cpu>=1.7.4             # 本地向量检索 (世界观与历史设定)
+tinydb>=4.8.0                # 轻量级 KV 数据库 (状态追踪器)
+redis>=5.0.0                 # 备用/生产级 KV 数据库 (可选)
+
+# === 前端交互 ===
+streamlit>=1.32.0            # 用于构建带人类干预 (HITL) 视角的双栏工作台
+
+# === 监控与调试 (推荐) ===
+langsmith>=0.1.0             # 用于 Agent 链路追踪与 Prompt 调试
