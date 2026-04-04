@@ -8,6 +8,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from app.core.config import settings
 from app.core.llm_factory import get_llm, get_embeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class RAGEngine:
@@ -40,6 +41,13 @@ class RAGEngine:
             print("📖 [RAG-Engine] 未检测到历史库，初始化全新向量空间。")
             self.vector_store = None
 
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=100,
+            # 优先按照段落和句子来切分，最大限度保留网文的语义连贯性
+            separators=["\n\n", "\n", "。", "！", "？", "，", " ", ""]
+        )
+
     def insert_events(self, events: List[str], chapter_num: int):
         """
         供 Memory_Keeper 调用：将定稿章节的全局事件(Global Events)写入向量库
@@ -54,6 +62,8 @@ class RAGEngine:
                 metadata={"chapter": chapter_num, "type": "plot_event"}
             ) for event in events
         ]
+
+        split_docs = self.text_splitter.split_documents(documents)
 
         if self.vector_store is None:
             # 首次插入，创建新的库

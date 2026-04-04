@@ -6,6 +6,7 @@ langchain-core>=0.2.0
 langchain-openai>=0.1.0      # 用于接入 GPT-4o, DeepSeek, GLM 等兼容 OpenAI 格式的模型
 langchain-anthropic>=0.1.0   # 用于接入 Claude 系列模型
 langchain-community>=0.0.20  # 社区贡献的模型适配器 (如 Gemini, Mistral 等)
+langgraph-checkpoint-sqlite
 
 # === 数据结构与环境配置 ===
 pydantic>=2.0.0              # 用于构建协议 schemas

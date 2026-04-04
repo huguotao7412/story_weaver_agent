@@ -1,12 +1,13 @@
 # 人类在环协议 (定义人类总编打回/通过的数据格式)
 # protocols/hitl_schemas.py
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal,List
 
 class EditorInternalReview(BaseModel):
     """🕵️ 内部 AI 逻辑审查协议 (Continuity-Editor 的输出)"""
     status: Literal["PASS", "FAIL"] = Field(description="内部校验状态")
-    bug_reports: list[str] = Field(default_factory=list, description="发现的逻辑漏洞、战力崩塌或 OOC 列表")
+    consistency_score: float = Field(default=1.0, description="一致性评分 0.0 - 1.0")
+    bug_reports: List[str] = Field(default_factory=list, description="发现的逻辑漏洞、战力崩塌或 OOC 列表")
     revision_suggestions: str = Field(default="", description="给 Chapter-Writer 的返工指导")
 
 class HumanDecision(BaseModel):

@@ -28,18 +28,26 @@ def human_review_node(state: dict) -> Dict[str, Any]:
     # 获取人类注入的决策状态和批注反馈
     status = state.get("human_approval_status", "PENDING").upper()
     feedback = state.get("human_feedback", "")
+    direct_edits = state.get("direct_edits", "")
     chapter_num = state.get("current_chapter_num", 1)
+
+    draft_updates = {}
+    if direct_edits and direct_edits.strip() != "":
+        print("👑 [Supervisor] 检测到总编的手动批改文本，正在强行覆盖原系统草稿...")
+        draft_updates["draft_content"] = direct_edits
 
     # 1. 人类直接批准入库
     if status == "APPROVED":
         msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor")
-        print(f"✅ [Supervisor] 总编已批准第 {chapter_num} 章定稿！流转至 Memory-Keeper 进行持久化。")
+        print(f"✅ [Supervisor] 总编已批准第 {chapter_num} 章定稿！流转至 Memory-Keeper。")
         return {
             "human_approval_status": "APPROVED",
-            # 清空上一轮的反馈和内部报错，保持 State 干净
             "human_feedback": "",
+            "direct_edits": "",  # 清空历史状态
             "editor_comments": "PASS",
-            "messages": [msg]
+            "internal_revision_count": 0,  # 重置打回计数器
+            "messages": [msg],
+            **draft_updates  # 注入修改后的草稿
         }
 
     # 2. 人类打回并附加强指令覆盖 (Human Override)

@@ -53,5 +53,4 @@ def get_embeddings() -> OpenAIEmbeddings:
         api_key=api_key,
         base_url=base_url,
         model=model_name,
-        chunk_size=64
     )

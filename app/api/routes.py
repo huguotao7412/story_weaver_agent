@@ -28,6 +28,7 @@ class FeedbackRequest(BaseModel):
     thread_id: str = "story_thread_01"
     approval_status: Literal["APPROVED", "REJECTED"]
     human_feedback: Optional[str] = ""
+    direct_edits: Optional[str] = ""
 
 # === 🌟 新增接口：独立触发文风解构师 ===
 @router.post("/analyze_style")
@@ -102,7 +103,8 @@ async def receive_human_feedback(req: FeedbackRequest):
     # 2. 将人类的决策作为强制状态注入（Human Override）
     human_decision = {
         "human_approval_status": req.approval_status,
-        "human_feedback": req.human_feedback
+        "human_feedback": req.human_feedback,
+        "direct_edits": req.direct_edits
     }
     storyweaver_app.update_state(config, human_decision)
 

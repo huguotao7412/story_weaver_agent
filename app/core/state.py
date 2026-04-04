@@ -25,7 +25,9 @@ class TomatoNovelState(TypedDict):
 
     # === 3. 内部 AI 互搏区 ===
     editor_comments: str  # 内部逻辑审查结果 ("PASS" 或具体的 bug 提示)
+    internal_revision_count: int
 
     # === 4. 🌟 人类最高权限干涉区 (HITL) ===
     human_approval_status: str  # 事务控制: "PENDING", "REJECTED", "APPROVED"
     human_feedback: str  # 递归规划注入的人类批注指令
+    direct_edits: str

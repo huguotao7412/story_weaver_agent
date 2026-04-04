@@ -1,11 +1,13 @@
 # 核心图编排：定义节点流转、双向循环与中断断点
 # 🕸️ 核心工作流图编排：LangGraph 两段式路由与人类在环
 # app/agents/graph.py
-
+import os
+import sqlite3
 from langgraph.graph import StateGraph, START, END
 from typing import Literal
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+from app.core.config import settings
 
 # 导入核心状态结构
 from app.core.state import TomatoNovelState
@@ -31,8 +33,12 @@ def editor_router(state: TomatoNovelState) -> Literal["Human_Review", "Chapter_W
     if state.get("editor_comments") == "PASS":
         print("🔀 [Router] 内部审查通过，流转至人类审核环节。")
         return "Human_Review"
+    elif state.get("internal_revision_count", 0) >= 3:
+        print("🔀 [Router] ⚠️ 内部审查死循环熔断！重写次数超限，强制流转至总编桌面。")
+        # 直接让流程挂起，把带有 Bug 的草稿和 Editor 的抱怨一起展示给人类，让人类定夺
+        return "Human_Review"
     else:
-        print("🔀 [Router] 内部审查未通过，打回主笔节点返工。")
+        print(f"🔀 [Router] 内部审查未通过 (第 {state.get('internal_revision_count', 0)} 次)，打回主笔节点返工。")
         return "Chapter_Writer"
 
 
@@ -88,7 +94,10 @@ def build_workflow() -> StateGraph:
 
     # 6. 入库完结，准备进入下一章节的循环
     workflow.add_edge("Memory_Keeper", END)
-    memory = MemorySaver()
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
+    db_path = os.path.join(settings.DATA_DIR, "checkpoints.sqlite")
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    memory = SqliteSaver(conn)
 
     # 7. 🌟 编译图并设置“人类干预断点 (Breakpoints)”
     # 这是最核心的一步：在执行到 Human_Review 节点前，系统强制挂起，等待前端 UI 注入人类的新状态

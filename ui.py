@@ -25,6 +25,8 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = f"thread_{uuid.uuid4().hex[:8]}"
 if "draft_content" not in st.session_state:
     st.session_state.draft_content = "暂无草稿..."
+if "edited_draft" not in st.session_state:
+    st.session_state.edited_draft = ""  # 🌟 新增：保存用户手动修改后的草稿
 if "current_beat_sheet" not in st.session_state:
     st.session_state.current_beat_sheet = ""
 if "is_paused_for_review" not in st.session_state:
@@ -173,11 +175,21 @@ def start_generation_stream(user_input, chapter_num):
 
 def send_human_feedback(approval_status, feedback_text):
     """调用 /feedback 接口发送人类审批结果"""
+    # 🌟 核心改造：判断文本是否被总编手动修改过
+    original_draft = st.session_state.get("draft_content", "")
+    edited_draft = st.session_state.get("edited_draft", "")
+
+    direct_edits = ""
+    if edited_draft and edited_draft != original_draft:
+        direct_edits = edited_draft
+
     payload = {
         "thread_id": st.session_state.thread_id,
         "approval_status": approval_status,
-        "human_feedback": feedback_text
+        "human_feedback": feedback_text,
+        "direct_edits": direct_edits  # 🌟 传递直接编辑的文本给后端
     }
+
     try:
         response = requests.post(f"{API_BASE_URL}/feedback", json=payload)
         if response.status_code == 200:
@@ -208,14 +220,13 @@ with col_left:
     tab1, tab2, tab3 = st.tabs(["✍️ 当前正文草稿", "🗺️ 本章节拍器", "🕵️ 内部审查意见"])
 
     with tab1:
-        st.markdown(
-            f"""
-            <div style="height: 600px; overflow-y: scroll; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9; color: #333;">
-                {st.session_state.draft_content.replace(chr(10), '<br>')}
-            </div>
-            """,
-            unsafe_allow_html=True
+        # 🌟 核心改造：将 HTML 渲染改为可编辑的 st.text_area
+        edited_draft = st.text_area(
+            "✍️ 终极权限：您可以在此直接润色文本。点击右侧批准后，这里的文本将直接入库。",
+            value=st.session_state.draft_content,
+            height=600
         )
+        st.session_state.edited_draft = edited_draft
 
     with tab2:
         st.text_area("单章大纲 (JSON)", value=st.session_state.current_beat_sheet, height=500, disabled=True)
