@@ -5,6 +5,7 @@ import json
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.config import settings
+from app.memory.rag_engine import RAGEngine
 
 # 引入 LLM 工厂
 from app.core.llm_factory import get_llm
