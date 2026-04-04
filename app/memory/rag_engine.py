@@ -5,8 +5,9 @@
 import os
 from typing import List, Dict, Any
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings  # 如果您使用其他模型，可以替换为 HuggingFaceEmbeddings 等
 from langchain_core.documents import Document
+from app.core.config import settings
+from app.core.llm_factory import get_llm, get_embeddings
 
 
 class RAGEngine:
@@ -15,14 +16,17 @@ class RAGEngine:
     负责将非结构化的历史剧情、长线伏笔持久化为向量，并在后续生成中提供检索。
     """
 
-    def __init__(self, persist_dir: str = "data/faiss_index"):
+    def __init__(self, persist_dir: str = None):
+        if persist_dir is None:
+            persist_dir = settings.FAISS_DB_PATH
+
         self.persist_dir = persist_dir
         # 确保 data 目录存在
         os.makedirs(os.path.dirname(self.persist_dir), exist_ok=True)
 
         # 初始化 Embedding 模型
         # 这里默认使用 OpenAI 的 text-embedding-3-small。如果您是纯本地环境，可换成 BAAI/bge-large-zh-v1.5
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        self.embeddings = get_embeddings()
 
         # 尝试加载已有的本地向量库，如果不存在则初始化为空
         if os.path.exists(os.path.join(persist_dir, "index.faiss")):

@@ -45,7 +45,7 @@ def style_analyzer_node(state: dict) -> Dict[str, Any]:
         return {}
 
     # 实例化 LLM：根据你的 llm_factory，"main" 对应 DeepSeek-Chat，非常适合结构化特征提取
-    llm = get_llm(model_type="fast", temperature=0.1)
+    llm = get_llm(model_type="main", temperature=0.1)
 
     # 组装 Prompt
     formatted_messages = [

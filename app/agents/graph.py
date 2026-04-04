@@ -5,6 +5,8 @@
 from langgraph.graph import StateGraph, START, END
 from typing import Literal
 
+from langgraph.checkpoint.memory import MemorySaver
+
 # 导入核心状态结构
 from app.core.state import TomatoNovelState
 
@@ -86,10 +88,13 @@ def build_workflow() -> StateGraph:
 
     # 6. 入库完结，准备进入下一章节的循环
     workflow.add_edge("Memory_Keeper", END)
+    memory = MemorySaver()
 
     # 7. 🌟 编译图并设置“人类干预断点 (Breakpoints)”
     # 这是最核心的一步：在执行到 Human_Review 节点前，系统强制挂起，等待前端 UI 注入人类的新状态
-    compiled_graph = workflow.compile(interrupt_before=["Human_Review"])
+    compiled_graph = workflow.compile(
+        checkpointer=memory,
+        interrupt_before=["Human_Review"])
 
     return compiled_graph
 

@@ -26,6 +26,9 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 【本书专属世界观背景】：
 {world_bible}
 
+【🌟历史剧情与伏笔参考】：
+{history_context}
+
 【全局文风强约束 (文风白皮书)】：
 {style_guide}
 """
@@ -41,6 +44,8 @@ def chapter_writer_node(state: dict) -> Dict[str, Any]:
     current_beat_sheet = state.get("current_beat_sheet", "暂无大纲。")
     current_draft = state.get("draft_content", "")
 
+    history_context = state.get("rag_history_context", "暂无历史剧情。")
+
     # 提取文风白皮书 (处理 SharedValue 格式或普通格式)
     target_style_obj = state.get("target_writing_style", {})
     style_guide = "通俗口语化，极快节奏的网文爽文风"  # 默认兜底
@@ -53,7 +58,8 @@ def chapter_writer_node(state: dict) -> Dict[str, Any]:
     # 2. 组装系统级 Prompt
     sys_prompt = WRITER_SYSTEM_PROMPT.format(
         world_bible=world_bible,
-        style_guide=style_guide
+        history_context=history_context,
+        style_guide=style_guide,
     )
 
     # 3. 🌟 根据事务流转状态，动态生成“指令 (Instruction)”

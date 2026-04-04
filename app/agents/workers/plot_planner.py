@@ -7,6 +7,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 # 引入你的 LLM 工厂与配置项
 from app.core.llm_factory import get_llm
 from app.core.config import settings
+from app.memory.kv_tracker import KVTracker
+from app.memory.rag_engine import RAGEngine
 
 # ==========================================
 # 🧠 提示词定义区
@@ -25,13 +27,19 @@ WORLD_BUILDER_PROMPT = """你是一个顶级的下沉市场网文【世界观架
 """
 
 PLOT_PLANNER_PROMPT = """你是一个经验丰富、极其严苛的番茄【网文主编】。
-你要采用“层次化拆解（Hierarchical Generation）”的策略，基于《世界观圣经》，为小说的第 {chapter_num} 章规划详细的“单章节拍器（Beat Sheet）”。
+你要采用“层次化拆解（Hierarchical Generation）”的策略，基于《世界观圣经》及当前的动态状态，为小说的第 {chapter_num} 章规划详细的“单章节拍器（Beat Sheet）”。
 
 【当前世界观圣经】：
 {world_bible}
 
+【🌟当前人物与物品状态快照 (KV Database)】：
+{kv_state}
+
+【🌟相关历史剧情与伏笔参考 (RAG Database)】：
+{history_context}
+
 【层次化规划要求】：
-1. 宏观对齐：本章剧情必须服务于全书主线。
+1. 宏观对齐：本章剧情必须服务于全书主线，并合理延续当前的“人物状态”与“历史伏笔”。
 2. 微观节拍：将本章拆解为 3-5 个具体的剧情节拍（Beat）。
 3. 网文公式约束（强制）：
    - 必须包含至少一个【爽点/打脸/装逼】环节。
@@ -102,12 +110,28 @@ def plot_planner_node(state: dict) -> Dict[str, Any]:
     # --- 阶段二：Plot-Planner 职责 ---
     print(f"🗺️ [Plot-Planner] 正在进行层次化拆解，生成第 {current_chapter_num} 章节拍器...")
 
-    # 🌟 核心修复：根据 config 中的配置动态决定是否注入“悬念钩子”规则
+    try:
+        kv_tracker = KVTracker()
+        current_kv_state = kv_tracker.get_world_bible_snapshot()
+    except Exception as e:
+        print(f"⚠️ [Plot-Planner] KVTracker 读取失败，使用空状态: {e}")
+        current_kv_state = "（当前暂无角色状态快照）"
+
+    try:
+        rag_engine = RAGEngine()
+        # 这里用 user_input 作为 query 进行检索
+        history_context = rag_engine.retrieve_context(query=user_input, k=3)
+    except Exception as e:
+        print(f"⚠️ [Plot-Planner] RAGEngine 读取失败，使用空状态: {e}")
+        history_context = "（当前暂无历史剧情可供参考）"
+
     cliffhanger_rule = "   - 章节结尾必须设置一个【悬念钩子（Cliffhanger）】，吸引读者看下一章。" if settings.CLIFFHANGER_REQUIREMENT else ""
 
     planner_sys_prompt = PLOT_PLANNER_PROMPT.format(
         chapter_num=current_chapter_num,
         world_bible=world_bible,
+        kv_state=current_kv_state,  # 注入动态人物状态
+        history_context=history_context,  # 注入 RAG 历史伏笔
         cliffhanger_rule=cliffhanger_rule
     )
 
@@ -127,14 +151,28 @@ def plot_planner_node(state: dict) -> Dict[str, Any]:
 
     try:
         beat_sheet_dict = json.loads(content)
-        updates["current_beat_sheet"] = json.dumps(beat_sheet_dict, ensure_ascii=False, indent=2)
+        beat_sheet_json = json.dumps(beat_sheet_dict, ensure_ascii=False, indent=2)
+        updates["current_beat_sheet"] = beat_sheet_json
     except json.JSONDecodeError:
         print("⚠️ [Plot-Planner] JSON 解析失败，触发 Fallback 机制。")
         fallback_sheet = {
             "chapter_title": f"第 {current_chapter_num} 章",
             "beats": [{"plot_summary": content, "is_climax": False, "hook": ""}]
         }
-        updates["current_beat_sheet"] = json.dumps(fallback_sheet, ensure_ascii=False)
+        beat_sheet_json = json.dumps(fallback_sheet, ensure_ascii=False)
+        updates["current_beat_sheet"] = beat_sheet_json
+
+    print("🔍 [Plot-Planner] 正在基于本章节拍器，向 RAG 引擎反向检索历史伏笔...")
+    try:
+        rag_engine = RAGEngine()
+        # 用刚刚结构化出来的、几百字的高密度大纲作为 Query 去捞取历史剧情
+        history_context = rag_engine.retrieve_context(query=beat_sheet_json, k=3)
+    except Exception as e:
+        print(f"⚠️ [Plot-Planner] RAGEngine 读取失败: {e}")
+        history_context = "（当前暂无历史剧情可供参考）"
+
+    # 将检索到的伏笔存入图状态中
+    updates["rag_history_context"] = history_context
 
     if state.get("current_chapter_num") is None:
         updates["current_chapter_num"] = current_chapter_num

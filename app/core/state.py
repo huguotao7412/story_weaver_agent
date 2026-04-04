@@ -1,9 +1,7 @@
-# 定义 TomatoNovelState，包含草稿区与记忆区的状态管理
 # app/core/state.py
 from typing import Annotated, TypedDict, List, Optional
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-from langgraph.managed.is_last_step import SharedValue
 
 
 class TomatoNovelState(TypedDict):
@@ -13,8 +11,12 @@ class TomatoNovelState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
 
     # === 1. 全局配置与静态知识库 (只读区) ===
-    target_writing_style: Annotated[dict, SharedValue.on("novel_id")]  # 动态克隆的《文风白皮书》字符串或序列化 JSON
-    world_bible_context: str  # 外部 FAISS 动态检索出的世界观与历史剧情快照
+    # 🌟 修复：移除导致报错的 SharedValue，直接使用 dict，LangGraph 默认会覆盖更新
+    target_writing_style: dict
+    world_bible_context: str  # FAISS 检索出的世界观与历史剧情快照
+
+    # 🌟 新增字段：基于大纲反向检索出的历史剧情/伏笔
+    rag_history_context: str
 
     # === 2. 当前章节工作区 (事务隔离的草稿区) ===
     current_chapter_num: int  # 当前正在生成的章节号

@@ -2,7 +2,7 @@
 # 职责：【数据库写入节点】提炼定稿章节中的状态变更（如：获得神器、配角死亡），动态更新至全局。
 # 参考实现：脱离 LLM 上下文窗口限制，利用外部 KV 数据库追踪长线 Metadata。
 # app/agents/workers/memory_keeper.py
-
+import os
 import json
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.llm_factory import get_llm
 from app.memory.kv_tracker import KVTracker
 from app.memory.rag_engine import RAGEngine
+from app.core.config import settings
 
 # ==========================================
 # 🧠 提示词定义区：非结构化文本转结构化 KV
@@ -114,6 +115,19 @@ def memory_keeper_node(state: dict) -> Dict[str, Any]:
             rag_engine.insert_events(global_events, chapter_num)
 
         print(f"✅ [Memory-Keeper] 第 {chapter_num} 章核心数据持久化完成。上下文窗口压力已释放。")
+
+        try:
+            # 采用 001, 002 这种补零格式，保证文件夹内排序正常
+            file_name = f"chapter_{chapter_num:03d}.md"
+            file_path = os.path.join(settings.CHAPTER_ARCHIVE_DIR, file_name)
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"# 第 {chapter_num} 章\n\n")
+                f.write(draft)
+
+            print(f"   [文本归档] 章节正文已成功归档至: {file_path}")
+        except Exception as e:
+            print(f"⚠️ [Memory-Keeper] 章节 Markdown 归档失败: {e}")
 
         # 记忆更新完毕，重置人类审批状态，准备进入下一章流转
         return {

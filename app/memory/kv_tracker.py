@@ -4,6 +4,7 @@
 
 import os
 from tinydb import TinyDB, Query
+from app.core.config import settings
 
 
 class KVTracker:
@@ -12,7 +13,10 @@ class KVTracker:
     用于脱离 LLM 上下文，长期记忆人物的等级、死活、地理位置与持有物品。
     """
 
-    def __init__(self, db_path="data/story_kv_state.json"):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            db_path = settings.KV_DB_PATH
+
         # 确保目录存在
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db = TinyDB(db_path)
