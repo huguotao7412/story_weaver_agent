@@ -86,7 +86,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
     active_threads_snapshot = tracker.get_active_threads_snapshot()
 
     llm = get_llm(model_type="main", temperature=0.1)
-    structured_llm = llm.with_structured_output(MemoryExtraction)
+    structured_llm = llm.with_structured_output(MemoryExtraction, method="json_mode")
 
     prompt_messages = [
         SystemMessage(content=MEMORY_EXTRACTION_PROMPT),
