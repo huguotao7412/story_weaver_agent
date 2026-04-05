@@ -16,8 +16,8 @@ class RAGEngine:
     Global(全局) -> Volume(分卷) -> Phase(单期)
     """
 
-    def __init__(self, base_dir: str = None):
-        self.base_dir = base_dir or settings.FAISS_DB_PATH
+    def __init__(self, book_id: str = "default_book"):
+        self.base_dir = os.path.join(settings.DATA_DIR, book_id, "faiss_index")
 
         # 🌟 为三层库分别建立独立的物理存储路径
         self.global_dir = os.path.join(self.base_dir, "global_lore")

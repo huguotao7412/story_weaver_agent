@@ -7,6 +7,8 @@ from langgraph.graph.message import add_messages
 class TomatoNovelState(TypedDict):
     """引擎级全局事务状态数据结构定义"""
 
+    book_id: str
+
     # 消息总线
     messages: Annotated[List[BaseMessage], add_messages]
 

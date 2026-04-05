@@ -3,7 +3,7 @@ import os
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage,AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage, AIMessage
 
 from app.core.llm_factory import get_llm
 from app.memory.kv_tracker import KVTracker
@@ -35,7 +35,6 @@ class ItemUpdate(BaseModel):
     description: str = Field(description="关于获得或消耗的具体描述")
 
 
-# 🕳️ 新增：填坑追踪器
 class ResolvedThread(BaseModel):
     thread_id: int = Field(description="成功填上的伏笔坑的 ID (必须是系统提供的 ID 数字)")
     reason: str = Field(description="简述是如何解决的（例如：主角本章一剑斩杀了反派，大仇得报）")
@@ -45,13 +44,10 @@ class MemoryExtraction(BaseModel):
     map_update: MapUpdate = Field(description="主角宏观地图变更检测")
     character_updates: List[CharacterUpdate] = Field(default_factory=list, description="角色状态变更")
     item_updates: List[ItemUpdate] = Field(default_factory=list, description="物品状态变更")
-
-    # 🕳️ 新增：挖坑与填坑列表
     new_mysteries: List[str] = Field(default_factory=list,
                                      description="【挖坑】本章新挖的悬念坑、未解之谜、新结的死仇或长期约定（明确清晰的陈述）")
     resolved_mysteries: List[ResolvedThread] = Field(default_factory=list,
                                                      description="【填坑】对照现有的伏笔池，本章成功彻底解决掉的伏笔")
-
     global_events: List[str] = Field(default_factory=list, description="其他对世界观有影响的全局客观大事件")
 
 
@@ -81,12 +77,12 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
     draft = state.get("draft_content", "")
     chapter_num = state.get("current_chapter_num", 1)
     messages = state.get("messages", [])
+    current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
 
     if not draft:
         return {}
 
-    tracker = KVTracker()
-    # 🌟 获取当前的伏笔悬念池，喂给大模型
+    tracker = KVTracker(book_id=current_book_id)  # 🌟 隔离实例
     active_threads_snapshot = tracker.get_active_threads_snapshot()
 
     llm = get_llm(model_type="main", temperature=0.1)
@@ -97,29 +93,25 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         HumanMessage(
             content=f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n【第 {chapter_num} 章定稿正文】：\n{draft}\n\n请提取状态变更与伏笔。")
     ]
+
     memory_updates = None
     max_retries = 3
     for attempt in range(max_retries):
         try:
             memory_updates = await structured_llm.ainvoke(prompt_messages)
-            break  # 成功则跳出循环
+            break
         except Exception as e:
             print(f"⚠️ [Memory-Keeper] 第 {attempt + 1} 次解析状态失败: {e}")
             if attempt < max_retries - 1:
-                # 将错误信息喂给大模型，让它自我修正
                 prompt_messages.append(AIMessage(content="你的输出格式有误，导致 JSON 解析失败。"))
                 prompt_messages.append(HumanMessage(
                     content=f"这是报错信息：{str(e)}\n请检查必填字段是否遗漏，并严格遵守 JSON Schema 重新输出，不要附加任何说明文字。"))
 
-    # 如果三次都失败了，执行安全熔断
     if not memory_updates:
         print("❌ [Memory-Keeper] 连续 3 次提取状态失败，放弃本次状态更新，强制入库防卡死。")
         return {"human_approval_status": "PENDING", "human_feedback": ""}
 
     try:
-        memory_updates: MemoryExtraction =await structured_llm.ainvoke(prompt_messages)
-
-        # 1. 地图与角色状态更新 (与之前一致)
         if memory_updates.map_update.has_changed and memory_updates.map_update.new_map_name:
             tracker.set_global_map(memory_updates.map_update.new_map_name)
             print(f"   [🗺️ 换地图触发] 主角跨越大地图至: {memory_updates.map_update.new_map_name}")
@@ -131,12 +123,10 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         for iu in memory_updates.item_updates:
             tracker.update_inventory(iu.owner, iu.item_name, iu.action, chapter_num)
 
-        # 🌟 2. 伏笔池：挖坑逻辑 (新增)
         for mystery in memory_updates.new_mysteries:
             tracker.add_unresolved_thread(mystery, chapter_num)
             print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨: {mystery}")
 
-        # 🌟 3. 伏笔池：填坑逻辑 (消除)
         valid_threads = tracker.threads_table.all()
         valid_ids = [t.doc_id for t in valid_threads]
 
@@ -145,18 +135,18 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
                 tracker.remove_resolved_thread(resolved.thread_id)
                 print(f"   [✨ 填坑完成] 伏笔 [ID: {resolved.thread_id}] 已解决。原因: {resolved.reason}")
             else:
-                # 触发防御拦截
                 print(f"   [🛡️ 幻觉防御] LLM 试图填一个不存在的伏笔 (ID: {resolved.thread_id})，已拦截。")
 
-        # 4. RAG 事件入库
-        rag_engine = RAGEngine()
+        rag_engine = RAGEngine(book_id=current_book_id)  # 🌟 隔离实例
         if memory_updates.global_events:
             rag_engine.insert_global_events(memory_updates.global_events, chapter_num)
 
-        # 5. 物理归档与内存回收 (与之前一致)
         try:
+            # 🌟 按书籍隔离归档目录
+            archive_dir = os.path.join(settings.CHAPTER_ARCHIVE_DIR, current_book_id)
+            os.makedirs(archive_dir, exist_ok=True)
             file_name = f"chapter_{chapter_num:03d}.md"
-            file_path = os.path.join(settings.CHAPTER_ARCHIVE_DIR, file_name)
+            file_path = os.path.join(archive_dir, file_name)
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(f"# 第 {chapter_num} 章\n\n{draft}")
         except Exception as e:

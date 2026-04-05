@@ -11,9 +11,8 @@ class KVTracker:
     【百万字升级版】：支持冷热数据分离与地图冻结机制。
     """
 
-    def __init__(self, db_path=None):
-        if db_path is None:
-            db_path = settings.KV_DB_PATH
+    def __init__(self, book_id: str = "default_book"):
+        db_path = os.path.join(settings.DATA_DIR, book_id, "kv_state.json")
 
         # 确保目录存在
         os.makedirs(os.path.dirname(db_path), exist_ok=True)

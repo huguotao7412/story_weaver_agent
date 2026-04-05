@@ -87,28 +87,41 @@ class RAGQueryPlan(BaseModel):
 async def book_planner_node(state: dict) -> Dict[str, Any]:
     """负责初始化世界观，并生成全书 10 卷大纲"""
     book_outline = state.get("book_outline_context", "")
+    current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
 
     if book_outline and book_outline.strip() != "":
         return {}  # 已存在则直接跳过
 
-    print("📚 [Book-Planner] 检测到全新长篇，正在初始化《全书总纲》(10卷) 与世界观...")
+    print(f"📚 [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...")
     llm = get_llm(model_type="main", temperature=0.3)
     user_input = state.get("messages", [HumanMessage(content="请按网文套路推进")])[-1].content
 
-    # 这里可以使用 structured_output 绑定 BookOutline Schema
+    world_bible_preset = state.get("world_bible_context", "")
+
+    if world_bible_preset:
+        print("   [Book-Planner] 检测到作者预设的《世界观设定》，将以此为基准推演大纲...")
+        prompt_content = (
+            f"【作者预设的权威世界观（请绝对遵循，不要擅自修改设定的规则与境界）】：\n{world_bible_preset}\n\n"
+            f"【本次剧情脑洞/指令】：{user_input}\n\n"
+            f"任务：请基于上述权威世界观，推演出【全书十卷大纲】，并将预设世界观整理润色后填入 world_bible 字段中返回。"
+        )
+    else:
+        print("   [Book-Planner] 无预设设定，将根据脑洞从零生成世界观...")
+        prompt_content = f"【用户初始脑洞】：{user_input}\n请发挥创意，从零构建《世界观圣经》并规划【全书十卷大纲】。"
+
     structured_llm = llm.with_structured_output(BookOutline)
     messages = [
         SystemMessage(content=LAYER1_BOOK_PROMPT),
-        HumanMessage(content=f"【用户初始脑洞】：{user_input}")
+        HumanMessage(content=prompt_content)
     ]
 
     try:
-        book_result: BookOutline =await structured_llm.ainvoke(messages)
+        book_result: BookOutline = await structured_llm.ainvoke(messages)
         book_json = json.dumps(book_result.model_dump(), ensure_ascii=False, indent=2)
 
         # 🌟 知识库防漏水：第一时间将世界观灌入全局 RAG
         try:
-            rag_engine = RAGEngine()
+            rag_engine = RAGEngine(book_id=current_book_id)  # 🌟 隔离实例
             rag_engine.insert_world_bible([{"title": "全书世界观与总纲", "content": book_json}])
             print("✅ [Book-Planner] 《全书总纲》已成功灌入全局 RAG 向量空间。")
         except Exception as e:
@@ -127,12 +140,11 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
     """负责将当前卷切分为前、中、后三期"""
     volume_phases = state.get("current_volume_phases", "")
     current_chapter_num = state.get("current_chapter_num", 1)
+    current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
 
-    # 💡 核心修复 1：利用章节号计算当前卷 (30章一卷)
     current_volume_num = (current_chapter_num - 1) // 30 + 1
     is_new_volume = (current_chapter_num == 1) or ((current_chapter_num - 1) % 30 == 0)
 
-    # 逻辑：如果没有分卷大纲，或者触发了跨卷，则生成新大纲
     if volume_phases and volume_phases.strip() != "" and not is_new_volume:
         return {}
 
@@ -143,7 +155,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
 
     structured_llm = llm.with_structured_output(VolumePhases)
     try:
-        phase_result: VolumePhases =await structured_llm.ainvoke([
+        phase_result: VolumePhases = await structured_llm.ainvoke([
             SystemMessage(content=LAYER2_VOLUME_PROMPT.format(
                 book_outline=book_outline,
                 current_volume_num=current_volume_num
@@ -154,7 +166,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
         if current_chapter_num > 1 and is_new_volume:
             print("🧹 [Volume-Planner] 新卷大纲生成成功！正在安全清理上一卷的 RAG 剧情库，迎接新地图...")
             try:
-                RAGEngine().reset_volume_store()
+                RAGEngine(book_id=current_book_id).reset_volume_store()  # 🌟 隔离清理
             except Exception as e:
                 print(f"⚠️ RAG 清理异常: {e}")
 
@@ -170,14 +182,13 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
     """负责将当前期 (如前期) 切分为 10 章具体梗概"""
     phase_chapters = state.get("current_phase_chapters", "")
     current_chapter_num = state.get("current_chapter_num", 1)
+    current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
 
-    # 💡 核心修复 1：利用章节号计算当前期 (10章一期)
     is_new_phase = (current_chapter_num == 1) or ((current_chapter_num - 1) % 10 == 0)
 
     if phase_chapters and phase_chapters.strip() != "" and not is_new_phase:
         return {}
 
-    # 计算名称：前期、中期、后期
     phase_names = ["前期", "中期", "后期"]
     current_phase_index = ((current_chapter_num - 1) // 10) % 3
     current_phase_name = phase_names[current_phase_index]
@@ -189,15 +200,14 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
     volume_phases = state.get("current_volume_phases", "")
 
     try:
-        rag_engine = RAGEngine()
-        # 注意：这里已经修复了你之前的第一步 RAG 传参 Bug
+        rag_engine = RAGEngine(book_id=current_book_id)  # 🌟 隔离实例
         history_context = rag_engine.retrieve_context(query=volume_phases, k_global=1, k_volume=2, k_phase=1)
     except:
         history_context = "（暂无历史）"
 
     structured_llm = llm.with_structured_output(PhaseChapters)
     try:
-        chapters_result: PhaseChapters =await structured_llm.ainvoke([
+        chapters_result: PhaseChapters = await structured_llm.ainvoke([
             SystemMessage(content=LAYER3_PHASE_PROMPT.format(
                 world_bible=world_bible,
                 volume_phases=volume_phases,
@@ -210,7 +220,7 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
         if current_chapter_num > 1 and is_new_phase:
             print("🧹 [Phase-Planner] 新期推演成功！正在安全清理上一期的 RAG 细节碎片，防止记忆污染...")
             try:
-                RAGEngine().reset_phase_store()
+                RAGEngine(book_id=current_book_id).reset_phase_store()  # 🌟 隔离清理
             except Exception as e:
                 pass
 
@@ -226,6 +236,7 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
 async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     """取代原有的 plot_planner_node，专注于生成微观 3-5 个节拍"""
     current_chapter_num = state.get("current_chapter_num", 1)
+    current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
     print(f"📍 [Chapter-Planner] 正在严格对齐本期十章梗概，拆解第 {current_chapter_num} 章节拍器...")
 
     llm = get_llm(model_type="main", temperature=0.2)
@@ -233,19 +244,13 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     phase_chapters = state.get("current_phase_chapters", "")
     volume_phases = state.get("current_volume_phases", "（暂无分卷大纲）")
 
-    # 🌟 核心升级：提取冷热隔离的 KV、伏笔悬念池 以及 三层立体 RAG
     try:
-        tracker = KVTracker()
-        # 1. 获取过滤后的活跃角色状态
+        tracker = KVTracker(book_id=current_book_id)  # 🌟 隔离实例
         current_kv_state = tracker.get_world_bible_snapshot()
-
-        # 2. 获取未解伏笔池，拼接到状态中给大模型看
         unresolved_threads = tracker.get_active_threads_snapshot()
         current_kv_state += f"\n\n{unresolved_threads}"
 
-        # 3. 适配三层架构 RAG，从全局、分卷、单期分别抽调记忆
         try:
-            # 引入 Fast 模型进行极速意图识别
             fast_llm = get_llm(model_type="fast", temperature=0.1)
             rewriter_llm = fast_llm.with_structured_output(RAGQueryPlan)
 
@@ -257,10 +262,9 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
 
             rag_plan: RAGQueryPlan = await rewriter_llm.ainvoke([HumanMessage(content=rewriter_prompt)])
 
-            print(
-                f"   [🔍 RAG 智能路由] 关键词: {rag_plan.optimized_query} | K值分配: Global={rag_plan.k_global}, Volume={rag_plan.k_volume}, Phase={rag_plan.k_phase}")
+            print(f"   [🔍 RAG 智能路由] 关键词: {rag_plan.optimized_query} | K值分配: Global={rag_plan.k_global}, Volume={rag_plan.k_volume}, Phase={rag_plan.k_phase}")
 
-            rag_engine = RAGEngine()
+            rag_engine = RAGEngine(book_id=current_book_id)  # 🌟 隔离实例
             history_context = rag_engine.retrieve_context(
                 query=rag_plan.optimized_query,
                 k_global=rag_plan.k_global,
@@ -269,7 +273,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
             )
         except Exception as e:
             print(f"⚠️ [Query-Rewriter 异常，降级为默认模糊检索]: {e}")
-            rag_engine = RAGEngine()
+            rag_engine = RAGEngine(book_id=current_book_id)  # 🌟 隔离实例
             history_context = rag_engine.retrieve_context(
                 query=phase_chapters, k_global=1, k_volume=2, k_phase=2
             )
@@ -279,7 +283,6 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
 
     cliffhanger_rule = "   - 结尾必须设置【悬念钩子】。" if settings.CLIFFHANGER_REQUIREMENT else ""
 
-    # 组装系统 Prompt
     sys_prompt = LAYER4_CHAPTER_PROMPT.format(
         chapter_num=current_chapter_num,
         world_bible=world_bible,
@@ -293,16 +296,14 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     structured_llm = llm.with_structured_output(ChapterOutline)
 
     try:
-        planner_response: ChapterOutline =await structured_llm.ainvoke([
+        planner_response: ChapterOutline = await structured_llm.ainvoke([
             SystemMessage(content=sys_prompt),
-            # 🌟 核心升级：在最后一句用户指令中，强烈暗示 AI 推进或解决伏笔
             HumanMessage(
                 content=f"请生成第 {current_chapter_num} 章节拍器。如果剧情合适，请优先从【未解伏笔/悬念/仇恨池】中挑选 1-2 个进行推进或彻底解决（填坑）。")
         ])
 
         beat_sheet_json = json.dumps(planner_response.model_dump(), ensure_ascii=False, indent=2)
 
-        # 将生成的单章大纲和历史参考一起向下游(主笔节点)传递
         return {
             "current_beat_sheet": beat_sheet_json,
             "rag_history_context": history_context

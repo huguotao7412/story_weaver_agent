@@ -27,6 +27,7 @@ class GenerateRequest(BaseModel):
     thread_id: str = "story_thread_01"
     chapter_num: int = 1
     target_writing_style: Optional[Dict[str, Any]] = None
+    predefined_world_bible: Optional[str] = ""
 
 
 class StyleRequest(BaseModel):
@@ -61,8 +62,12 @@ async def generate_novel_stream(req: GenerateRequest):
 
     initial_state = {
         "messages": [HumanMessage(content=req.user_input)],
-        "current_chapter_num": req.chapter_num
+        "current_chapter_num": req.chapter_num,
+        "book_id": req.thread_id
     }
+
+    if req.predefined_world_bible and req.predefined_world_bible.strip():
+        initial_state["world_bible_context"] = req.predefined_world_bible
 
     if req.target_writing_style:
         initial_state["target_writing_style"] = req.target_writing_style
