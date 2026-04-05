@@ -112,9 +112,12 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     ]
     formatted_messages.extend(recent_history)
     formatted_messages.append(HumanMessage(content=instruction))
+    print("\n✍️ [Chapter-Writer] 主笔正在疯狂码字中，请看下方实时输出：\n" + "-" * 50)
 
-    response =await llm.ainvoke(formatted_messages)
-    new_draft = response.content.strip()
+    new_draft = ""
+    async for chunk in llm.astream(formatted_messages):
+        print(chunk.content, end="", flush=True)
+        new_draft += chunk.content
 
     action_message = AIMessage(
         content=f"[Chapter-Writer] 第 {state.get('current_chapter_num', 1)} 章正文草稿已生成，字数：{len(new_draft)}。",

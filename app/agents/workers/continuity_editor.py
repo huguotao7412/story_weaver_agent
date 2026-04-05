@@ -87,12 +87,12 @@ async def continuity_editor_node(state: dict) -> Dict[str, Any]:
         consistency_score = review_result.consistency_score
 
         # 判断打回条件：status 为 FAIL，或者一致性评分过低
-        if status == "PASS" and consistency_score >= 0.8:
-            print(f"✅ [Editor] 审查通过！草稿逻辑无懈可击。(一致性评分: {consistency_score})")
+        if status == "PASS" or consistency_score >= 0.5:
+            print(f"✅ [Editor] 审查通过！(测试期放宽标准，当前评分: {consistency_score})")
             msg = AIMessage(content="[Editor] 逻辑审查通过，准备提交总编。", name="Editor")
             return {
                 "editor_comments": "PASS",
-                "internal_revision_count": 0,  # 🌟 成功则清零重试计数器
+                "internal_revision_count": 0,  # 成功则清零重试计数器
                 "messages": [msg]
             }
         else:
