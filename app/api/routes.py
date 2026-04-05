@@ -71,7 +71,15 @@ async def generate_novel_stream(req: GenerateRequest):
                 )
 
                 # 🌟 使用 .astream() 获取异步流转事件
-                async for event in storyweaver_app.astream(initial_state, config=config):
+                current_state = await storyweaver_app.aget_state(config)
+
+                if current_state.next:
+                    run_input = None
+                else:
+                    run_input = initial_state
+
+                # 🌟 传入正确的参数启动流式事件
+                async for event in storyweaver_app.astream(run_input, config=config):
                     node_name = list(event.keys())[0]
                     state_updates = event[node_name]
 
@@ -119,8 +127,14 @@ async def receive_human_feedback(req: FeedbackRequest):
             # 🌟 异步更新状态：aupdate_state
             await storyweaver_app.aupdate_state(config, human_decision)
 
-            # 🌟 异步执行后续节点：ainvoke
-            await storyweaver_app.ainvoke(None, config=config)
+            # 💡 核心修复：状态分流
+            if req.approval_status == "APPROVED":
+                # 如果是批准，后面只剩下 Memory_Keeper 节点，直接后台跑完即可，无需流式
+                await storyweaver_app.ainvoke(None, config=config)
+            else:
+                # 如果是打回重写 (REJECTED)，【绝对不要】在这里 ainvoke！
+                # 图必须保持挂起状态，等待前端发起 /stream 请求来唤醒，从而实现重写过程的流式打字机效果。
+                pass
 
             next_step = (await storyweaver_app.aget_state(config)).next
             status_msg = "入库完成" if not next_step else "已打回主笔重写"

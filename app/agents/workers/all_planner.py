@@ -27,7 +27,7 @@ LAYER1_BOOK_PROMPT = """你是一个白金级网文【全书总架构师】。
 
 # 2. 第二层：分卷三期 (前、中、后)
 LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
-你的任务是提取《全书总纲》中【当前卷】的核心目标，将其严格切分为“前、中、后”三期。
+你的任务是提取《全书总纲》中【第 {current_volume_num} 卷】的核心目标，将其严格切分为“前、中、后”三期。
 
 【全局世界观与十卷总纲】：
 {book_outline}
@@ -40,7 +40,7 @@ LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
 
 # 3. 第三层：单期十章 (10章)
 LAYER3_PHASE_PROMPT = """你是一个精细的网文【单期统筹编剧】。
-你的任务是基于当前卷的【当前期 (前/中/后期)】目标，规划出具体的【十章】剧情梗概。
+你的任务是基于当前卷的【{current_phase_name}】目标，规划出具体的【十章】剧情梗概。
 
 【全局世界观】：
 {world_bible}
@@ -118,19 +118,36 @@ def book_planner_node(state: dict) -> Dict[str, Any]:
 def volume_planner_node(state: dict) -> Dict[str, Any]:
     """负责将当前卷切分为前、中、后三期"""
     volume_phases = state.get("current_volume_phases", "")
+    current_chapter_num = state.get("current_chapter_num", 1)
 
-    # 逻辑：如果没有分卷三期大纲，或者当前章数超出了本卷范围，则触发生成
-    if volume_phases and volume_phases.strip() != "":
+    # 💡 核心修复 1：利用章节号计算当前卷 (30章一卷)
+    current_volume_num = (current_chapter_num - 1) // 30 + 1
+    is_new_volume = (current_chapter_num == 1) or ((current_chapter_num - 1) % 30 == 0)
+
+    # 逻辑：如果没有分卷大纲，或者触发了跨卷，则生成新大纲
+    if volume_phases and volume_phases.strip() != "" and not is_new_volume:
         return {}
 
-    print("📜 [Volume-Planner] 正在将当前卷切分为【前、中、后】三期...")
+    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在将本卷切分为【前、中、后】三期...")
+
+    # 💡 核心修复 2：跨卷触发 RAG 阅后即焚
+    if current_chapter_num > 1 and is_new_volume:
+        print("🧹 [Volume-Planner] 触发跨卷！正在彻底清理上一卷的 RAG 剧情库，迎接新地图...")
+        try:
+            RAGEngine().reset_volume_store()
+        except Exception as e:
+            pass
+
     llm = get_llm(model_type="main", temperature=0.3)
     book_outline = state.get("book_outline_context", "暂无总纲")
 
     structured_llm = llm.with_structured_output(VolumePhases)
     try:
         phase_result: VolumePhases = structured_llm.invoke([
-            SystemMessage(content=LAYER2_VOLUME_PROMPT.format(book_outline=book_outline)),
+            SystemMessage(content=LAYER2_VOLUME_PROMPT.format(
+                book_outline=book_outline,
+                current_volume_num=current_volume_num
+            )),
             HumanMessage(content="请生成当前分卷的三期拆解大纲。")
         ])
         phase_json = json.dumps(phase_result.model_dump(), ensure_ascii=False, indent=2)
@@ -139,26 +156,43 @@ def volume_planner_node(state: dict) -> Dict[str, Any]:
         print(f"⚠️ [Volume-Planner] 异常: {e}")
         return {}
 
-
 # ==========================================
 # 🗺️ 节点三：单期统筹编剧 (Phase Planner)
 # ==========================================
 def phase_planner_node(state: dict) -> Dict[str, Any]:
     """负责将当前期 (如前期) 切分为 10 章具体梗概"""
     phase_chapters = state.get("current_phase_chapters", "")
+    current_chapter_num = state.get("current_chapter_num", 1)
 
-    if phase_chapters and phase_chapters.strip() != "":
+    # 💡 核心修复 1：利用章节号计算当前期 (10章一期)
+    is_new_phase = (current_chapter_num == 1) or ((current_chapter_num - 1) % 10 == 0)
+
+    if phase_chapters and phase_chapters.strip() != "" and not is_new_phase:
         return {}
 
-    print("📑 [Phase-Planner] 正在基于本期任务，详细推演【十章】连贯剧情...")
-    llm = get_llm(model_type="main", temperature=0.2)
+    # 计算名称：前期、中期、后期
+    phase_names = ["前期", "中期", "后期"]
+    current_phase_index = ((current_chapter_num - 1) // 10) % 3
+    current_phase_name = phase_names[current_phase_index]
 
+    print(f"📑 [Phase-Planner] 触发跨期推演！当前进入本卷的【{current_phase_name}】，推演十章剧情...")
+
+    # 💡 核心修复 2：跨期触发 RAG 阅后即焚
+    if current_chapter_num > 1 and is_new_phase:
+        print("🧹 [Phase-Planner] 触发跨期！正在清理上一期的 RAG 细节碎片，防止记忆污染...")
+        try:
+            RAGEngine().reset_phase_store()
+        except Exception as e:
+            pass
+
+    llm = get_llm(model_type="main", temperature=0.2)
     world_bible = state.get("world_bible_context", "")
     volume_phases = state.get("current_volume_phases", "")
 
     try:
         rag_engine = RAGEngine()
-        history_context = rag_engine.retrieve_context(query=volume_phases, k=4)
+        # 注意：这里已经修复了你之前的第一步 RAG 传参 Bug
+        history_context = rag_engine.retrieve_context(query=volume_phases, k_global=1, k_volume=2, k_phase=1)
     except:
         history_context = "（暂无历史）"
 
@@ -168,7 +202,8 @@ def phase_planner_node(state: dict) -> Dict[str, Any]:
             SystemMessage(content=LAYER3_PHASE_PROMPT.format(
                 world_bible=world_bible,
                 volume_phases=volume_phases,
-                history_context=history_context
+                history_context=history_context,
+                current_phase_name=current_phase_name
             )),
             HumanMessage(content="请推演本期 10 章的具体梗概。")
         ])

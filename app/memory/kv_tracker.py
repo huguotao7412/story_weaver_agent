@@ -88,46 +88,53 @@ class KVTracker:
             self.inventory_table.remove((Inventory.owner == owner) & (Inventory.item_name == item_name))
 
     # ==========================================
-    # 📸 快照生成 (🌟 冷热数据分离引擎)
+    # 📸 快照生成 (🌟 冷热数据分离引擎 + 死亡清理)
     # ==========================================
     def get_world_bible_snapshot(self) -> str:
-        """
-        供 Planner 和 Writer 调用。
-        执行冷热过滤：只返回 【核心角色】 + 【当前地图活跃角色】，剔除旧地图的非核心配角。
-        """
-        current_map = self.get_global_map()
-        all_chars = self.characters_table.all()
+            """
+            供 Planner 和 Writer 调用。
+            执行冷热过滤与生死过滤：只返回 【存活核心角色】 + 【当前地图存活配角】。
+            """
+            current_map = self.get_global_map()
+            all_chars = self.characters_table.all()
 
-        active_chars = []
-        frozen_count = 0
+            active_chars = []
+            frozen_count = 0
+            dead_count = 0  # 💡 新增：记录已被清理的死者数量
 
-        for char in all_chars:
-            # 兼容老数据，如果没有 is_core 字段默认为 False
-            is_core = char.get("is_core", False)
-            location = char.get("location", "未知")
+            for char in all_chars:
+                is_core = char.get("is_core", False)
+                location = char.get("location", "未知")
+                status = char.get("status", "存活")
 
-            # 🌟 核心过滤逻辑：你是核心主角团，或者你就在当前地图，才会被唤醒
-            if is_core or location == current_map:
-                active_chars.append(char)
-            else:
-                frozen_count += 1
+                # 💡 核心修复：死亡判定。如果状态包含死/亡/陨落，直接跳过，不占用宝贵的上下文
+                if any(keyword in status for keyword in ["死", "亡", "陨落", "灭", "已故"]):
+                    dead_count += 1
+                    continue
 
-        snapshot = f"【🗺️ 当前主地图】：{current_map}\n"
-        snapshot += f"【🌟 活跃人物状态快照 (已自动冻结 {frozen_count} 个非当前地图的冷数据配角)】：\n"
+                # 🌟 核心过滤逻辑：你是核心主角团，或者你就在当前地图，才会被唤醒
+                if is_core or location == current_map:
+                    active_chars.append(char)
+                else:
+                    frozen_count += 1
 
-        if not active_chars:
-            snapshot += "- 暂无活跃角色记录\n"
+            snapshot = f"【🗺️ 当前主地图】：{current_map}\n"
+            # 💡 更新提示语，让大模型知道系统做了自动清理
+            snapshot += f"【🌟 活跃人物状态快照 (已冻结 {frozen_count} 个跨地图冷数据，清理 {dead_count} 个已故角色)】：\n"
 
-        for char in active_chars:
-            status = char.get("status", "存活")
-            location = char.get("location", "未知")
-            level = char.get("level", "凡人")
-            # 打上直观的 Tag 方便大模型理解角色重要度
-            core_tag = "[🔥核心主角团]" if char.get("is_core") else "[📍本地配角]"
+            if not active_chars:
+                snapshot += "- 暂无活跃角色记录\n"
 
-            snapshot += f"- {char['name']} {core_tag}: {status} | 境界: {level} | 位置: {location}\n"
+            for char in active_chars:
+                status = char.get("status", "存活")
+                location = char.get("location", "未知")
+                level = char.get("level", "凡人")
+                # 打上直观的 Tag 方便大模型理解角色重要度
+                core_tag = "[🔥核心主角团]" if char.get("is_core") else "[📍本地配角]"
 
-        return snapshot
+                snapshot += f"- {char['name']} {core_tag}: {status} | 境界: {level} | 位置: {location}\n"
+
+            return snapshot
 
     # ==========================================
     # 🕳️ 伏笔池：挖坑与填坑管理
