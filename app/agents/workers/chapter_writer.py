@@ -1,18 +1,12 @@
-#职责：苦力担当。融合《文风白皮书》与单章大纲，输出白话、明快、极具网文感的正文草稿。
 # app/agents/workers/chapter_writer.py
 
 import json
 from typing import Dict, Any
-from langchain_core.messages import HumanMessage, SystemMessage,AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.core.config import settings
 from app.memory.rag_engine import RAGEngine
-
-# 引入 LLM 工厂
 from app.core.llm_factory import get_llm
 
-# ==========================================
-# ✍️ 金牌主笔：核心基础提示词 (系统级约束)
-# ==========================================
 WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场的【网文金牌主笔】。
 你的码字速度极快，且深谙“网文爽点心理学”与“下沉市场阅读习惯”。
 
@@ -42,18 +36,15 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     """
     ✍️ Chapter-Writer (金牌主笔) 节点
-    职责：融合文风、大纲与历史状态，输出（或重写）正文草稿。
+    职责：融合文风、大纲与历史状态，安静地在后台输出（或重写）正文草稿。
     """
-    # 1. 从图状态中提取所需上下文
     world_bible = state.get("world_bible_context", "暂无宏观世界观。")
     current_beat_sheet = state.get("current_beat_sheet", "暂无大纲。")
     current_draft = state.get("draft_content", "")
-
     history_context = state.get("rag_history_context", "暂无历史剧情。")
 
-    # 提取文风白皮书 (处理 SharedValue 格式或普通格式)
     target_style_obj = state.get("target_writing_style", {})
-    style_guide = "通俗口语化，极快节奏的网文爽文风"  # 默认兜底
+    style_guide = "通俗口语化，极快节奏的网文爽文风"
     if isinstance(target_style_obj, dict) and "novel_specific" in target_style_obj:
         rules = target_style_obj["novel_specific"].get("rules", {})
         style_guide = rules.get("compiled_prompt", str(rules))
@@ -62,19 +53,17 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
 
     messages_history = state.get("messages", [])
 
-    # 2. 组装系统级 Prompt
     sys_prompt = WRITER_SYSTEM_PROMPT.format(
         world_bible=world_bible,
         history_context=history_context,
         style_guide=style_guide,
     )
 
-    # 3. 🌟 根据事务流转状态，动态生成“指令 (Instruction)”
     human_status = state.get("human_approval_status")
     human_feedback = state.get("human_feedback", "")
 
     if human_status == "REJECTED":
-        print("✍️ [Chapter-Writer] 收到人类总编【最高优先级指令】，正在含泪重写...")
+        print("✍️ [Chapter-Writer] 收到人类总编【打回重写】指令，正在后台含泪重构...")
         instruction = (
             f"【🔥 最高指令：人类总编打回重写】\n"
             f"人类总编严厉批注：{human_feedback}\n"
@@ -83,7 +72,8 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
             f"结合本章大纲（参考下文），彻底重写本章正文。务必让总编满意！"
         )
     else:
-        print("✍️ [Chapter-Writer] 拿到全新大纲，正在文思泉涌，奋笔疾书首次草稿...")
+        print(
+            f"✍️ [Chapter-Writer] 正在后台疯狂码字生成第 {state.get('current_chapter_num', 1)} 章正文 (日志已静音)...")
         instruction = (
             f"【首次生成指令】\n"
             f"这是本章的详细节拍器（大纲）：\n{current_beat_sheet}\n\n"
@@ -91,23 +81,16 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
             f"字数要求在 {settings.MAX_WORDS_PER_CHAPTER} 字左右，注意行文节奏，不要像列大纲一样流水账，要写出画面感！"
         )
 
-
-    # 4. 调用 LLM (主笔需要强大的文本生成能力和一定的温度值以保证创造力)
-    # 这里推荐温度稍微高一点 (e.g., 0.7)，让文字更有网文的张力
     llm = get_llm(model_type="main", temperature=0.7)
-
     recent_history = messages_history[-5:] if len(messages_history) > 5 else messages_history
 
-    formatted_messages = [
-        SystemMessage(content=sys_prompt)
-    ]
+    formatted_messages = [SystemMessage(content=sys_prompt)]
     formatted_messages.extend(recent_history)
     formatted_messages.append(HumanMessage(content=instruction))
-    print("\n✍️ [Chapter-Writer] 主笔正在疯狂码字中，请看下方实时输出：\n" + "-" * 50)
 
+    # 🌟 修复点：取消了打印刷屏的逻辑，直接安静拼接字符串
     new_draft = ""
     async for chunk in llm.astream(formatted_messages):
-        print(chunk.content, end="", flush=True)
         new_draft += chunk.content
 
     action_message = AIMessage(
@@ -115,10 +98,9 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
         name="Chapter_Writer"
     )
 
-    # 5. 更新状态区的草稿内容 (此时绝对不能入库，只留在隔离草稿区)
-    # 同时，每次生成新的草稿后，清理掉之前的审查意见，准备迎接下一轮审查
+    print(f"✅ [Chapter-Writer] 码字完毕，草稿已推流至操作台！字数：{len(new_draft)}")
     return {
         "draft_content": new_draft,
-        "human_approval_status": "PENDING" , # 重置人类审查状态为待定
+        "human_approval_status": "PENDING",
         "messages": [action_message]
     }
