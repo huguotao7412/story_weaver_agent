@@ -142,8 +142,8 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             rag_engine.insert_global_events(memory_updates.global_events, chapter_num)
 
         try:
-            # 🌟 按书籍隔离归档目录
-            archive_dir = os.path.join(settings.CHAPTER_ARCHIVE_DIR, current_book_id)
+            # 🌟 统一存放到本书的专属沙盒中
+            archive_dir = os.path.join(settings.DATA_DIR, current_book_id, "chapter_archive")
             os.makedirs(archive_dir, exist_ok=True)
             file_name = f"chapter_{chapter_num:03d}.md"
             file_path = os.path.join(archive_dir, file_name)

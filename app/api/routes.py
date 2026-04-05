@@ -3,6 +3,8 @@
 
 import os
 import json
+import shutil
+import aiosqlite
 from typing import Optional, Literal, Dict, Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -89,8 +91,13 @@ async def generate_novel_stream(req: GenerateRequest):
                 async for event in storyweaver_app.astream(run_input, config=config):
                     node_name = list(event.keys())[0]
                     state_updates = event[node_name]
-                    payload = {"node": node_name, "updates": state_updates}
-                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+                    # 💡 修复点 1：剔除不需要传给前端 UI 的 messages，减轻网络负担
+                    safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
+                    payload = {"node": node_name, "updates": safe_updates}
+
+                    # 💡 修复点 2：加上 default=str，强制将任何不可序列化对象转为字符串，防止程序崩溃
+                    yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
                 # 🌟 探测断点位置并给前端发送信号
                 new_state = await storyweaver_app.aget_state(config)
@@ -157,3 +164,45 @@ async def receive_human_feedback(req: FeedbackRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"唤醒执行失败: {str(e)}")
+
+
+# === 核心接口 3：获取当前所有书籍列表 ===
+@router.get("/books")
+async def list_books():
+    if not os.path.exists(settings.DATA_DIR):
+        return {"books": []}
+
+    books = []
+    for item in os.listdir(settings.DATA_DIR):
+        item_path = os.path.join(settings.DATA_DIR, item)
+        # 排除全局文件夹和SQLite文件，只取书籍沙盒目录
+        if os.path.isdir(item_path) and item not in ["references", "raw_drafts"]:
+            books.append(item)
+    return {"books": books}
+
+
+# === 核心接口 4：彻底销毁某本书的全部数据 ===
+@router.delete("/books/{book_id}")
+async def delete_book(book_id: str):
+    # 1. 物理销毁文件（FAISS向量、TinyDB、Markdown草稿）
+    book_dir = os.path.join(settings.DATA_DIR, book_id)
+    if os.path.exists(book_dir):
+        try:
+            # 🌟【核心修复 3】：加入 ignore_errors=True
+            # 强行忽略由于 TinyDB 文件句柄未释放导致的 Windows 权限报错
+            shutil.rmtree(book_dir, ignore_errors=True)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"文件清理失败: {str(e)}")
+
+    # 2. 清理 LangGraph 的 SQLite 记忆库
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            # 🌟【核心修复 4】：修正 LangGraph V0.2 的底层表结构命名
+            await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (book_id,))
+            await db.execute("DELETE FROM checkpoint_writes WHERE thread_id = ?", (book_id,))
+            await db.execute("DELETE FROM checkpoint_blobs WHERE thread_id = ?", (book_id,))
+            await db.commit()
+    except Exception as e:
+        print(f"⚠️ SQLite 清理遇到阻碍: {e}")
+
+    return {"status": "success", "message": f"书籍 {book_id} 已被彻底超度。"}

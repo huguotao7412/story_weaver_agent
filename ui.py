@@ -23,18 +23,86 @@ if "predefined_world_bible" not in st.session_state: st.session_state.predefined
 
 # === 侧边栏：建书隔离、世界观注入、文风提取 ===
 with st.sidebar:
-    st.header("📂 项目/书目管理")
-    st.markdown("通过 ID 彻底隔离每本书的剧情库。输入相同的 ID 即可继续上次的断点续写。")
-    # ⚠️ 请确保这里输入一个全新的 ID，避开之前删除 Editor 节点带来的旧缓存报错
-    new_thread_id = st.text_input("当前项目 (Book ID)", value=st.session_state.thread_id)
+    st.header("📂 书库管理中心 (Workspace)")
 
-    if new_thread_id != st.session_state.thread_id:
-        st.session_state.thread_id = new_thread_id
+
+    # 1. 向后端请求最新书单
+    @st.cache_data(ttl=2)  # 增加微小缓存防止频繁请求
+    def fetch_books():
+        try:
+            res = requests.get(f"{API_BASE_URL}/books")
+            if res.status_code == 200:
+                return res.json().get("books", [])
+        except:
+            return []
+
+
+    existing_books = fetch_books()
+
+    # 🌟【核心修复 1】：防止下拉框被强行顶回旧书！
+    # 如果用户新建了一个书名，但后端还没创建物理文件夹
+    # 必须强制把这个新书名保留在列表中，否则 Selectbox 会自动跳回第一本旧书
+    if st.session_state.thread_id not in existing_books:
+        existing_books.append(st.session_state.thread_id)
+
+    # 2. 下拉框选择已有的书
+    current_index = existing_books.index(st.session_state.thread_id)
+    selected_book = st.selectbox("📚 选择并切换书目", existing_books, index=current_index)
+
+    if selected_book != st.session_state.thread_id:
+        st.session_state.thread_id = selected_book
         st.session_state.draft_content = "暂无草稿..."
         st.session_state.current_beat_sheet = ""
         st.session_state.is_paused_for_beat_sheet = False
         st.session_state.is_paused_for_review = False
         st.rerun()
+
+    col_btn_add, col_btn_del = st.columns(2)
+
+    # 3. 新建书籍的弹窗逻辑
+    with col_btn_add:
+        @st.dialog("➕ 创建新书")
+        def create_new_book_dialog():
+            st.info("💡 提示：输入书名后，请在右侧下发剧情指令，系统才会真正创建实体存储。")
+            new_book_name = st.text_input("输入新书的 Book ID (请使用英文/拼音/数字)")
+            if st.button("进入新项目", use_container_width=True, type="primary"):
+                if new_book_name and new_book_name.strip():
+                    st.session_state.thread_id = new_book_name.strip()
+                    st.session_state.draft_content = "暂无草稿..."
+                    st.rerun()
+
+
+        if st.button("➕ 新建小说"):
+            create_new_book_dialog()
+
+    # 4. 删除书籍的核弹按钮
+    with col_btn_del:
+        @st.dialog("⚠️ 危险操作")
+        def delete_book_dialog(book_to_delete):
+            st.error(f"你正在尝试彻底删除书籍：【{book_to_delete}】")
+            st.warning("此操作将物理删除 FAISS 向量库、状态机数据和正文备份，且无法恢复！")
+            confirm_text = st.text_input(f"请输入 '{book_to_delete}' 以确认删除")
+            if st.button("🗑️ 确认粉碎", use_container_width=True, disabled=confirm_text != book_to_delete):
+                with st.spinner("正在抹除记忆与文件..."):
+                    try:
+                        res = requests.delete(f"{API_BASE_URL}/books/{book_to_delete}")
+
+                        # 🌟【核心修复 2】：接收后端的真实状态，成功才重置界面
+                        if res.status_code == 200:
+                            fetch_books.clear()  # 清理缓存强制刷新
+                            # 智能寻找下一本书作为默认界面，如果都没了再 fallback
+                            remaining = [b for b in existing_books if b != book_to_delete]
+                            st.session_state.thread_id = remaining[0] if remaining else "default_book"
+                            st.session_state.draft_content = "暂无草稿..."
+                            st.rerun()
+                        else:
+                            st.error(f"❌ 删除失败: {res.text}")
+                    except Exception as e:
+                        st.error(f"❌ 网络异常，无法连接后端: {e}")
+
+
+        if st.button("🗑️ 销毁本书"):
+            delete_book_dialog(st.session_state.thread_id)
 
     st.divider()
 
