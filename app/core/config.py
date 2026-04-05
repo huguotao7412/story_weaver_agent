@@ -40,7 +40,7 @@ class Settings(BaseSettings):
                                description="RAG 历史剧情向量库")
 
     # === 番茄爽文公式全局参数 ===
-    MAX_WORDS_PER_CHAPTER: int = Field(default=3000, description="单章字数上限")
+    MAX_WORDS_PER_CHAPTER: int = Field(default=1000, description="单章字数上限")
     CLIFFHANGER_REQUIREMENT: bool = Field(default=True, description="强制章末悬念钩子")
 
     class Config:

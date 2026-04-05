@@ -66,7 +66,7 @@ async def continuity_editor_node(state: dict) -> Dict[str, Any]:
     llm = get_llm(model_type="main", temperature=0.1)
 
     # 🌟 核心改造：绑定 Pydantic 模型
-    structured_llm = llm.with_structured_output(EditorInternalReview, method="json_mode")
+    structured_llm = llm.with_structured_output(EditorInternalReview, method="function_calling")
 
     sys_prompt = EDITOR_PROMPT.format(
         world_bible=world_bible,

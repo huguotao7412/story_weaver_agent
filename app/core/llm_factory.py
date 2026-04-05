@@ -34,7 +34,7 @@ def get_llm(model_type: str = "main", temperature: float = None) -> ChatOpenAI:
         model=model_name,
         temperature=final_temp,
         max_retries=2,
-        timeout=60
+        timeout=240
     )
 
 def get_embeddings() -> OpenAIEmbeddings:
