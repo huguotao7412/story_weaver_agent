@@ -34,7 +34,7 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 """
 
 
-def chapter_writer_node(state: dict) -> Dict[str, Any]:
+async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     """
     ✍️ Chapter-Writer (金牌主笔) 节点
     职责：融合文风、大纲与历史状态，输出（或重写）正文草稿。
@@ -108,7 +108,7 @@ def chapter_writer_node(state: dict) -> Dict[str, Any]:
     formatted_messages.extend(recent_history)
     formatted_messages.append(HumanMessage(content=instruction))
 
-    response = llm.invoke(formatted_messages)
+    response =await llm.ainvoke(formatted_messages)
     new_draft = response.content.strip()
 
     action_message = AIMessage(

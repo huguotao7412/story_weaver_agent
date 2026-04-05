@@ -26,7 +26,7 @@ STYLE_ANALYSIS_PROMPT = """你是一个顶尖的网文“文风解构师”。
 """
 
 
-def style_analyzer_node(state: dict) -> Dict[str, Any]:
+async def style_analyzer_node(state: dict) -> Dict[str, Any]:
     """
     🎭 Style-Analyzer (文风解构师)
     提取参考片段的文风，并持久化到 target_writing_style 共享状态中。
@@ -54,7 +54,7 @@ def style_analyzer_node(state: dict) -> Dict[str, Any]:
     ]
 
     # 调用模型
-    response = llm.invoke(formatted_messages)
+    response =await llm.ainvoke(formatted_messages)
     content = response.content.strip()
 
     # 清理可能残留的 markdown 标签
