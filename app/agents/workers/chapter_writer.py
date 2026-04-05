@@ -70,9 +70,7 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     )
 
     # 3. 🌟 根据事务流转状态，动态生成“指令 (Instruction)”
-    # 完美贯彻白皮书中的“看人下菜碟”逻辑
     human_status = state.get("human_approval_status")
-    editor_comments = state.get("editor_comments")
     human_feedback = state.get("human_feedback", "")
 
     if human_status == "REJECTED":
@@ -84,14 +82,6 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
             f"任务：请你深呼吸，仔细揣摩总编的意图！抛弃原稿中不合理的部分，"
             f"结合本章大纲（参考下文），彻底重写本章正文。务必让总编满意！"
         )
-    elif editor_comments and editor_comments != "PASS":
-        print("✍️ [Chapter-Writer] 收到内部逻辑审查员的返工要求，正在修补 Bug...")
-        instruction = (
-            f"【内部 AI 审查返工指令】\n"
-            f"逻辑审查员在你的草稿中发现了致命漏洞或设定冲突：\n{editor_comments}\n"
-            f"你的原稿如下：\n{current_draft}\n\n"
-            f"任务：网文虽然是爽文，但绝不能前后矛盾。请仔细阅读大纲，修复上述 Bug，重新输出逻辑严丝合缝的正文草稿。"
-        )
     else:
         print("✍️ [Chapter-Writer] 拿到全新大纲，正在文思泉涌，奋笔疾书首次草稿...")
         instruction = (
@@ -100,6 +90,7 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
             f"任务：请严格按照大纲给定的情节走向和爽点要求，挥洒你的创意，生成本章的初版草稿。"
             f"字数要求在 {settings.MAX_WORDS_PER_CHAPTER} 字左右，注意行文节奏，不要像列大纲一样流水账，要写出画面感！"
         )
+
 
     # 4. 调用 LLM (主笔需要强大的文本生成能力和一定的温度值以保证创造力)
     # 这里推荐温度稍微高一点 (e.g., 0.7)，让文字更有网文的张力
@@ -128,7 +119,6 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     # 同时，每次生成新的草稿后，清理掉之前的审查意见，准备迎接下一轮审查
     return {
         "draft_content": new_draft,
-        "editor_comments": "",  # 重置内部审查状态
         "human_approval_status": "PENDING" , # 重置人类审查状态为待定
         "messages": [action_message]
     }
