@@ -34,6 +34,7 @@ class GenerateRequest(BaseModel):
 
 class StyleRequest(BaseModel):
     reference_text: str
+    reference_filename: Optional[str] = ""
 
 
 class FeedbackRequest(BaseModel):
@@ -46,15 +47,62 @@ class FeedbackRequest(BaseModel):
     target_node: Literal["Human_Review", "Chapter_Writer"] = "Human_Review"
 
 
-# === 接口 1：独立触发文风解构师 ===
+@router.get("/references")
+async def list_references():
+    """扫描并返回所有已保存的历史参考神作文件"""
+    if not os.path.exists(settings.REFERENCES_DIR):
+        return {"files": []}
+    # 过滤出所有 txt 文件
+    files = [f for f in os.listdir(settings.REFERENCES_DIR) if f.endswith('.txt')]
+    return {"files": files}
+
+
+# --- 3. 改造原有接口：文风解构师 ---
 @router.post("/analyze_style")
 async def analyze_style_api(req: StyleRequest):
     try:
-        state_mock = {"messages": [HumanMessage(content=req.reference_text)]}
-        result = style_analyzer_node(state_mock)
+        text_to_analyze = req.reference_text
+
+        # 🌟 如果传了文件名，优先让后端直接读取本地历史文件
+        if req.reference_filename:
+            file_path = os.path.join(settings.REFERENCES_DIR, req.reference_filename)
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    text_to_analyze = f.read()
+            else:
+                raise HTTPException(status_code=404, detail="参考文件不存在于历史库中")
+
+        if not text_to_analyze:
+            raise HTTPException(status_code=400, detail="未提供任何参考文本或文件名")
+
+        state_mock = {"messages": [HumanMessage(content=text_to_analyze)]}
+
+        # 💡 顺手修复原版的一个隐蔽 Bug：style_analyzer_node 是异步函数，这里必须 await
+        result = await style_analyzer_node(state_mock)
+
         return {"status": "success", "style_guide": result.get("target_writing_style", {})}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文风提取失败: {str(e)}")
+
+
+@router.get("/books/{book_id}/progress")
+async def get_book_progress(book_id: str):
+    """扫描沙盒，获取下一章的预期章节号，实现真正的断点续写"""
+    archive_dir = os.path.join(settings.DATA_DIR, book_id, "chapter_archive")
+    if not os.path.exists(archive_dir):
+        return {"next_chapter": 1}  # 没写过，就是第1章
+
+    max_chapter = 0
+    for filename in os.listdir(archive_dir):
+        if filename.startswith("chapter_") and filename.endswith(".md"):
+            try:
+                num_str = filename.split("_")[1].split(".")[0]  # 解析 chapter_001.md
+                num = int(num_str)
+                if num > max_chapter:
+                    max_chapter = num
+            except:
+                continue
+    return {"next_chapter": max_chapter + 1}  # 返回最新章 + 1
 
 
 # === 核心接口 1：流式启动节点 (异步升级版) ===
