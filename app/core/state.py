@@ -9,6 +9,7 @@ class TomatoNovelState(TypedDict):
 
     book_id: str
 
+
     # 消息总线
     messages: Annotated[List[BaseMessage], add_messages]
 
@@ -23,6 +24,7 @@ class TomatoNovelState(TypedDict):
 
     # 检索出的历史剧情/伏笔
     rag_history_context: str
+    previous_chapter_ending: str
 
     # === 2. 当前章节工作区 (事务隔离的草稿区) ===
     current_chapter_num: int

@@ -132,7 +132,7 @@ async def generate_novel_stream(req: GenerateRequest):
                 # ==========================================
                 # 🌟 核心修复：跨章节状态继承 (基因延续机制)
                 # ==========================================
-                # 如果不是第一章，则必须向后追溯，继承老章节的宏观大纲状态
+                # 如果不是第一章，则必须向后追溯，继承老章节的宏观大纲状态与画面钩子
                 if req.chapter_num > 1:
                     prev_thread_id = f"{req.thread_id}_chapter_{req.chapter_num - 1}"
                     prev_config = {"configurable": {"thread_id": prev_thread_id}}
@@ -155,6 +155,11 @@ async def generate_novel_stream(req: GenerateRequest):
                                 if k == "world_bible_context" and "world_bible_context" in initial_state:
                                     continue
                                 initial_state[k] = val
+
+                        # 🌟 新增：提取上一章最后 300 字，实现场景无缝衔接
+                        prev_draft = prev_state.values.get("draft_content", "")
+                        if prev_draft and prev_draft != "暂无草稿...":
+                            initial_state["previous_chapter_ending"] = prev_draft[-300:]
 
                 # 加载当前章节自身状态
                 current_state = await storyweaver_app.aget_state(config)

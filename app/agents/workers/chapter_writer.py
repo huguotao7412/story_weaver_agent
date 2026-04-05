@@ -43,6 +43,9 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     current_draft = state.get("draft_content", "")
     history_context = state.get("rag_history_context", "暂无历史剧情。")
 
+    # 🌟 提取跨章节状态继承的画面结尾钩子
+    prev_ending = state.get("previous_chapter_ending", "")
+
     target_style_obj = state.get("target_writing_style", {})
     style_guide = "通俗口语化，极快节奏的网文爽文风"
     if isinstance(target_style_obj, dict) and "novel_specific" in target_style_obj:
@@ -74,9 +77,20 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     else:
         print(
             f"✍️ [Chapter-Writer] 正在后台疯狂码字生成第 {state.get('current_chapter_num', 1)} 章正文 (日志已静音)...")
+
+        # 🌟 动态注入场景接轨指令
+        scene_hook_prompt = ""
+        if prev_ending:
+            scene_hook_prompt = (
+                f"\n【⚠️ 极其重要：上一章的最后画面】\n"
+                f"上一章的结尾原文是：\n《...{prev_ending}》\n"
+                f"你的任务：本章的第一段，必须【严格无缝接续】上述画面的最后一秒！绝对不能出现时间跳跃或场景突兀！\n"
+            )
+
         instruction = (
             f"【首次生成指令】\n"
-            f"这是本章的详细节拍器（大纲）：\n{current_beat_sheet}\n\n"
+            f"这是本章的详细节拍器（大纲）：\n{current_beat_sheet}\n"
+            f"{scene_hook_prompt}\n"
             f"任务：请严格按照大纲给定的情节走向和爽点要求，挥洒你的创意，生成本章的初版草稿。"
             f"字数要求在 {settings.MAX_WORDS_PER_CHAPTER} 字左右，注意行文节奏，不要像列大纲一样流水账，要写出画面感！"
         )
@@ -88,7 +102,7 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
     formatted_messages.extend(recent_history)
     formatted_messages.append(HumanMessage(content=instruction))
 
-    # 🌟 修复点：取消了打印刷屏的逻辑，直接安静拼接字符串
+    # 🌟 取消打印刷屏，静音生成
     new_draft = ""
     async for chunk in llm.astream(formatted_messages):
         new_draft += chunk.content
