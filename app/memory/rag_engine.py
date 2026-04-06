@@ -99,29 +99,32 @@ class RAGEngine:
         print(f"   [RAG写入] 单章细节已灌入 📜 Volume 库与 🔍 Phase 库 (Chapter {chapter_num})。")
 
     # ==========================================
-    # 🗑️ 遗忘/归档机制 (解决上下文污染)
+    # 🗑️ 遗忘/归档机制 (安全覆盖机制，解决空指针隐患)
     # ==========================================
     def reset_phase_store(self):
-        """
-        【清理 Phase 库】
-        触发时机：由 Phase-Planner 在开启“下一期”时调用。
-        效果：将上一期的细枝末节彻底遗忘。
-        """
-        self.phase_store = None
-        if os.path.exists(self.phase_dir):
-            shutil.rmtree(self.phase_dir)
-        print("🧹 [RAG-Engine] 【单期细节库】已清空，细枝末节已释放。")
+            """
+            【清理 Phase 库】安全重置机制：不删目录，用占位符覆盖
+            """
+            dummy_doc = Document(
+                page_content="【系统占位】本期剧情刚开始，暂无近期微观细节。",
+                metadata={"type": "placeholder", "chapter": 0}
+            )
+            # 用占位文档直接初始化一个新的 FAISS 库，安全覆盖旧数据
+            self.phase_store = FAISS.from_documents([dummy_doc], self.embeddings)
+            self._save_store(self.phase_store, self.phase_dir)
+            print("🧹 [RAG-Engine] 【单期细节库】已安全清空重建。")
 
     def reset_volume_store(self):
-        """
-        【清理 Volume 库】
-        触发时机：由 Volume-Planner 在开启“下一卷”时调用。
-        效果：配合换地图，将上一卷的剧情细节彻底遗忘。
-        """
-        self.volume_store = None
-        if os.path.exists(self.volume_dir):
-            shutil.rmtree(self.volume_dir)
-        print("🧹 [RAG-Engine] 【分卷剧情库】已清空，准备迎接新卷地图。")
+            """
+            【清理 Volume 库】安全重置机制：不删目录，用占位符覆盖
+            """
+            dummy_doc = Document(
+                page_content="【系统占位】本卷剧情刚开始，暂无宏观历史脉络。",
+                metadata={"type": "placeholder", "chapter": 0}
+            )
+            self.volume_store = FAISS.from_documents([dummy_doc], self.embeddings)
+            self._save_store(self.volume_store, self.volume_dir)
+            print("🧹 [RAG-Engine] 【分卷剧情库】已安全清空重建。")
 
     # ==========================================
     # 🔭 立体联合检索机制
@@ -137,8 +140,13 @@ class RAGEngine:
         context_str += "--- 🌍 全局法则与大事件 (Global Lore) ---\n"
         if self.global_store:
             global_results = self.global_store.similarity_search(query, k=k_global)
-            for i, doc in enumerate(global_results):
-                context_str += f"{i + 1}. {doc.page_content}\n"
+            # 过滤掉可能的占位符
+            valid_global = [d for d in global_results if d.metadata.get("type") != "placeholder"]
+            if valid_global:
+                for i, doc in enumerate(valid_global):
+                    context_str += f"{i + 1}. {doc.page_content}\n"
+            else:
+                context_str += "（暂无全局设定）\n"
         else:
             context_str += "（暂无全局设定）\n"
 
@@ -146,9 +154,13 @@ class RAGEngine:
         context_str += "\n--- 📜 本卷宏观剧情 (Volume Plot) ---\n"
         if self.volume_store:
             volume_results = self.volume_store.similarity_search(query, k=k_volume)
-            for i, doc in enumerate(volume_results):
-                chapter = doc.metadata.get("chapter", "?")
-                context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
+            valid_volume = [d for d in volume_results if d.metadata.get("type") != "placeholder"]
+            if valid_volume:
+                for i, doc in enumerate(valid_volume):
+                    chapter = doc.metadata.get("chapter", "?")
+                    context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
+            else:
+                context_str += "（暂无本卷历史）\n"
         else:
             context_str += "（暂无本卷历史）\n"
 
@@ -156,9 +168,13 @@ class RAGEngine:
         context_str += "\n--- 🔍 本期微观细节 (Phase Detail) ---\n"
         if self.phase_store:
             phase_results = self.phase_store.similarity_search(query, k=k_phase)
-            for i, doc in enumerate(phase_results):
-                chapter = doc.metadata.get("chapter", "?")
-                context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
+            valid_phase = [d for d in phase_results if d.metadata.get("type") != "placeholder"]
+            if valid_phase:
+                for i, doc in enumerate(valid_phase):
+                    chapter = doc.metadata.get("chapter", "?")
+                    context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
+            else:
+                context_str += "（暂无本期细节）\n"
         else:
             context_str += "（暂无本期细节）\n"
 

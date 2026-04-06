@@ -105,20 +105,9 @@ async def get_book_progress(book_id: str):
 # === 核心接口 1：流式启动节点 (异步升级版) ===
 @router.post("/stream")
 async def generate_novel_stream(req: GenerateRequest):
-    graph_thread_id = f"{req.thread_id}_chapter_{req.chapter_num}"
+    # 🌟 核心修复 1：统一使用书名作为唯一 Thread ID，打通全书上下文
+    graph_thread_id = req.thread_id
     config = {"configurable": {"thread_id": graph_thread_id}}
-
-    initial_state = {
-        "messages": [HumanMessage(content=req.user_input)],
-        "current_chapter_num": req.chapter_num,
-        "book_id": req.thread_id
-    }
-
-    if req.predefined_world_bible and req.predefined_world_bible.strip():
-        initial_state["world_bible_context"] = req.predefined_world_bible
-
-    if req.target_writing_style:
-        initial_state["target_writing_style"] = req.target_writing_style
 
     async def event_generator():
         try:
@@ -129,53 +118,50 @@ async def generate_novel_stream(req: GenerateRequest):
                     interrupt_before=["Chapter_Writer", "Human_Review"]
                 )
 
-                # ==========================================
-                # 🌟 核心修复：跨章节状态继承 (基因延续机制)
-                # ==========================================
-                # 如果不是第一章，则必须向后追溯，继承老章节的宏观大纲状态与画面钩子
-                if req.chapter_num > 1:
-                    prev_thread_id = f"{req.thread_id}_chapter_{req.chapter_num - 1}"
-                    prev_config = {"configurable": {"thread_id": prev_thread_id}}
-
-                    # 从底层 SQLite 中抽出上一章的完结状态
-                    prev_state = await storyweaver_app.aget_state(prev_config)
-
-                    if prev_state and prev_state.values:
-                        # 定义需要继承的长线宏观属性（防止 Planner 重新发病）
-                        keys_to_inherit = [
-                            "world_bible_context",  # 核心世界观
-                            "book_outline_context",  # 第一层：全书总纲
-                            "current_volume_phases",  # 第二层：分卷三期
-                            "current_phase_chapters"  # 第三层：单期十章
-                        ]
-                        for k in keys_to_inherit:
-                            val = prev_state.values.get(k)
-                            if val:
-                                # 优先保留前端输入的预设世界观，防止被覆盖
-                                if k == "world_bible_context" and "world_bible_context" in initial_state:
-                                    continue
-                                initial_state[k] = val
-
-                        # 🌟 新增：提取上一章最后 300 字，实现场景无缝衔接
-                        prev_draft = prev_state.values.get("draft_content", "")
-                        if prev_draft and prev_draft != "暂无草稿...":
-                            initial_state["previous_chapter_ending"] = prev_draft[-300:]
-
-                # 加载当前章节自身状态
+                # 获取当前这本书在数据库里的沉淀状态
                 current_state = await storyweaver_app.aget_state(config)
-                run_input = None if current_state.next else initial_state
 
-                # 启动数据流转
-                async for event in storyweaver_app.astream(run_input, config=config, stream_mode="updates"):
-                    node_name = list(event.keys())[0]
-                    state_updates = event[node_name]
+                if not current_state.next:
+                    # 🌟 场景 A：这是一本新书，或者上一章已经顺利跑到 END 完结了
+                    run_input = {
+                        "messages": [HumanMessage(content=req.user_input)],
+                        "current_chapter_num": req.chapter_num,
+                        "book_id": req.thread_id
+                    }
+                    # 仅在首次或用户有显式预设时才注入全局属性，其余时间靠 LangGraph 原生记忆自然继承
+                    if req.predefined_world_bible and req.predefined_world_bible.strip():
+                        run_input["world_bible_context"] = req.predefined_world_bible
+                    if req.target_writing_style:
+                        run_input["target_writing_style"] = req.target_writing_style
+                else:
+                    # 🌟 场景 B：图处于被挂起的状态（比如人类总编正在审核大纲或打回重写），此时只需传 None 唤醒继续执行
+                    run_input = None
 
-                    safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
-                    payload = {"node": node_name, "updates": safe_updates}
+                # 启动数据流转 (配合双流模式打字机)
+                async for chunk in storyweaver_app.astream(run_input,
+                                                           config=config,
+                                                           stream_mode=["updates", "messages"]):
+                    # chunk 是一个元组: (模式名称, 负载数据)
+                    mode = chunk[0]
+                    payload_data = chunk[1]
 
-                    yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+                    # 🌟 通道一：实时 Token 流穿透
+                    if mode == "messages":
+                        msg_chunk, metadata = payload_data
+                        # 只穿透主笔节点（Chapter_Writer）的 Token，不暴露 Planner 的思考过程
+                        if metadata.get("langgraph_node") == "Chapter_Writer" and msg_chunk.content:
+                            payload = {"type": "chunk", "content": msg_chunk.content}
+                            yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
-                # 探测断点位置并给前端发送信号
+                    # 🌟 通道二：完整的节点状态更新
+                    elif mode == "updates":
+                        node_name = list(payload_data.keys())[0]
+                        state_updates = payload_data[node_name]
+                        safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
+                        payload = {"node": node_name, "updates": safe_updates}
+                        yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+                # 探测断点位置并给前端发送挂起信号
                 new_state = await storyweaver_app.aget_state(config)
                 if new_state.next:
                     if "Chapter_Writer" in new_state.next:
@@ -193,7 +179,7 @@ async def generate_novel_stream(req: GenerateRequest):
 @router.post("/feedback")
 async def receive_human_feedback(req: FeedbackRequest):
     # 🌟 核心修复 3：唤醒时，也必须对齐由 章节号 拼装出来的图线程 ID
-    graph_thread_id = f"{req.thread_id}_chapter_{req.chapter_num}"
+    graph_thread_id = req.thread_id
     config = {"configurable": {"thread_id": graph_thread_id}}
 
     try:

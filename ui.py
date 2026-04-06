@@ -63,6 +63,7 @@ with st.sidebar:
         st.session_state.draft_content = "暂无草稿..."
         st.session_state.current_beat_sheet = ""
         st.session_state.app_stage = "IDLE"
+        st.session_state.target_writing_style = None  # 切书时清空文风，防止串味
         st.rerun()
 
     col_btn_add, col_btn_del = st.columns(2)
@@ -77,6 +78,7 @@ with st.sidebar:
                     st.session_state.draft_content = "暂无草稿..."
                     st.session_state.current_beat_sheet = ""
                     st.session_state.app_stage = "IDLE"
+                    st.session_state.target_writing_style = None
                     st.rerun()
 
         if st.button("➕ 新建小说"): create_new_book_dialog()
@@ -158,6 +160,8 @@ with st.sidebar:
     if st.session_state.target_writing_style:
         with st.expander("🟢 当前文风特征", expanded=False):
             st.json(st.session_state.target_writing_style.get("novel_specific", {}).get("rules", {}))
+    else:
+        st.info("🔄 文风待激活：若您之前已为本书提取过文风，引擎将在下次【启动推演】时自动从记忆库拉取并在此点亮；若是新书，请在上方提取。")
 
 
 # ==========================================
@@ -165,6 +169,11 @@ with st.sidebar:
 # ==========================================
 def start_generation_stream(user_input, chapter_num):
     st.session_state.app_stage = "RUNNING"
+
+    # 准备流式渲染的动态占位符
+    status_placeholder = st.empty()
+    stream_placeholder = st.empty()
+
     payload = {
         "user_input": user_input,
         "thread_id": st.session_state.thread_id,
@@ -186,6 +195,21 @@ def start_generation_stream(user_input, chapter_num):
                                 st.error(f"后端执行报错: {data['error']}")
                                 break
 
+                            # 处理节点进度展示
+                            if "node" in data:
+                                status_placeholder.info(f"🧠 引擎节点执行完毕: **{data['node']}**，流转中...")
+
+                            # 捕获 Token 碎片并实时渲染
+                            if data.get("type") == "chunk":
+                                status_placeholder.info("✍️ 金牌主笔正在疯狂码字中...")
+                                if st.session_state.draft_content == "暂无草稿...":
+                                    st.session_state.draft_content = ""
+
+                                st.session_state.draft_content += data["content"]
+                                # 直接操作占位符，实现所见即所得打字机
+                                stream_placeholder.markdown(st.session_state.draft_content)
+                                continue
+
                             # 正常收到挂起信号
                             if data.get("status") == "PAUSED_FOR_BEAT_SHEET_REVIEW":
                                 st.session_state.app_stage = "REVIEW_BEAT"
@@ -195,6 +219,8 @@ def start_generation_stream(user_input, chapter_num):
                                 break
 
                             updates = data.get("updates", {})
+                            if "target_writing_style" in updates:
+                                st.session_state.target_writing_style = updates["target_writing_style"]
                             if "current_beat_sheet" in updates:
                                 st.session_state.current_beat_sheet = updates["current_beat_sheet"]
                             if "draft_content" in updates:
@@ -219,7 +245,6 @@ def send_beat_feedback(edited_beat, reject=False):
         st.session_state.current_beat_sheet = ""
         return
 
-    # 🌟 修复：发送反馈时传入当前章节号，配合后端的唤醒定位
     payload = {
         "thread_id": st.session_state.thread_id,
         "chapter_num": st.session_state.current_chapter_num,
@@ -228,11 +253,11 @@ def send_beat_feedback(edited_beat, reject=False):
         "target_node": "Chapter_Writer"
     }
     requests.post(f"{API_BASE_URL}/feedback", json=payload)
+    st.session_state.draft_content = "" # 确认大纲发车前清空草稿
     start_generation_stream("", st.session_state.current_chapter_num)
 
 
 def send_draft_feedback(approval_status, feedback_text, direct_edits):
-    # 🌟 修复：发送反馈时传入当前章节号，配合后端的唤醒定位
     payload = {
         "thread_id": st.session_state.thread_id,
         "chapter_num": st.session_state.current_chapter_num,
@@ -245,6 +270,7 @@ def send_draft_feedback(approval_status, feedback_text, direct_edits):
 
     if res.status_code == 200:
         if approval_status == "REJECTED":
+            st.session_state.draft_content = "" # 打回重写时清空旧草稿
             start_generation_stream("", st.session_state.current_chapter_num)
         else:
             st.session_state.app_stage = "IDLE"
@@ -288,11 +314,13 @@ if st.session_state.app_stage == "IDLE":
             chapter_input = st.number_input("当前目标章节号", min_value=1, value=st.session_state.current_chapter_num,
                                             step=1)
         with col_inp2:
+            # 🌟 核心文案与交互体验优化：适配单线程连载模式
             plot_prompt = st.text_input(
-                f"为 第 {st.session_state.current_chapter_num} 章 注入剧情脑洞：",
-                placeholder="例如：在坊市捡漏买到神秘残片，遇到反派刁难...",
+                f"✍️ 第 {st.session_state.current_chapter_num} 章连载指令：",
+                placeholder="例如：紧接上一章结尾，主角果断拔剑，狠狠打脸反派...",
                 key="plot_prompt_input"
             )
+            st.caption("💡 提示：引擎已通过底层状态机自动继承**【前文画面】**与**【全局大纲】**，您无需重复交代背景，像总编一样直接下达后续的核心矛盾即可。")
 
         if st.button("🚀 启动推演：生成本章大纲", use_container_width=True, type="primary"):
             if not st.session_state.plot_prompt_input:

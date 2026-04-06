@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.core.config import settings
 from app.memory.rag_engine import RAGEngine
 from app.core.llm_factory import get_llm
+from langchain_core.runnables import RunnableConfig
 
 WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场的【网文金牌主笔】。
 你的码字速度极快，且深谙“网文爽点心理学”与“下沉市场阅读习惯”。
@@ -33,7 +34,7 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 """
 
 
-async def chapter_writer_node(state: dict) -> Dict[str, Any]:
+async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, Any]:
     """
     ✍️ Chapter-Writer (金牌主笔) 节点
     职责：融合文风、大纲与历史状态，安静地在后台输出（或重写）正文草稿。
@@ -104,7 +105,7 @@ async def chapter_writer_node(state: dict) -> Dict[str, Any]:
 
     # 🌟 取消打印刷屏，静音生成
     new_draft = ""
-    async for chunk in llm.astream(formatted_messages):
+    async for chunk in llm.astream(formatted_messages, config=config):
         new_draft += chunk.content
 
     action_message = AIMessage(

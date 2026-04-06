@@ -157,9 +157,12 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             for msg in messages[:-2]:
                 if hasattr(msg, "id") and msg.id: delete_messages.append(RemoveMessage(id=msg.id))
 
+        prev_ending = draft[-300:] if len(draft) > 300 else draft
+
         return {
             "human_approval_status": "PENDING",
             "human_feedback": "",
+            "previous_chapter_ending": prev_ending,
             "messages": delete_messages
         }
 
