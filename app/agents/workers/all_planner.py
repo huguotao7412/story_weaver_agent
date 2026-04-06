@@ -107,7 +107,8 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
     current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
 
     if book_outline and book_outline.strip() != "":
-        return {}  # 已存在则直接跳过
+        # 🌟 安全兜底：如果误入此节点，返回有效状态标记，防止 LangGraph 引擎静默挂断
+        return {"is_book_initialized": True}
 
     print(f"📚 [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...")
     llm = get_llm(model_type="main", temperature=0.3)
@@ -144,10 +145,10 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
         except Exception as e:
             print(f"⚠️ [Book-Planner] RAG 持久化异常: {e}")
 
-        return {"book_outline_context": book_json, "world_bible_context": book_result.world_bible}
+        return {"book_outline_context": book_json, "world_bible_context": book_result.world_bible, "is_book_initialized": True}
     except Exception as e:
         print(f"⚠️ [Book-Planner] 异常: {e}")
-        return {}
+        return {"is_book_initialized": False}
 
 
 # ==========================================
@@ -163,7 +164,8 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
     is_new_volume = (current_chapter_num == 1) or ((current_chapter_num - 1) % 30 == 0)
 
     if volume_phases and volume_phases.strip() != "" and not is_new_volume:
-        return {}
+        # 🌟 安全兜底
+        return {"is_volume_initialized": True}
 
     print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在将本卷切分为【前、中、后】三期...")
 
@@ -187,10 +189,10 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
             except Exception as e:
                 print(f"⚠️ RAG 清理异常: {e}")
 
-        return {"current_volume_phases": phase_json}
+        return {"current_volume_phases": phase_json, "is_volume_initialized": True}
     except Exception as e:
         print(f"⚠️ [Volume-Planner] 异常: {e}。旧大纲和旧 RAG 数据已保留，防止断档。")
-        return {}
+        return {"is_volume_initialized": False}
 
 # ==========================================
 # 🗺️ 节点三：单期统筹编剧 (Phase Planner)
@@ -204,7 +206,8 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
     is_new_phase = (current_chapter_num == 1) or ((current_chapter_num - 1) % 10 == 0)
 
     if phase_chapters and phase_chapters.strip() != "" and not is_new_phase:
-        return {}
+        # 🌟 安全兜底
+        return {"is_phase_initialized": True}
 
     phase_names = ["前期", "中期", "后期"]
     current_phase_index = ((current_chapter_num - 1) // 10) % 3
@@ -241,10 +244,10 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
             except Exception as e:
                 pass
 
-        return {"current_phase_chapters": chapters_json}
+        return {"current_phase_chapters": chapters_json, "is_phase_initialized": True}
     except Exception as e:
         print(f"⚠️ [Phase-Planner] 异常: {e}。旧大纲和旧 RAG 细节已保留。")
-        return {}
+        return {"is_phase_initialized": False}
 
 
 # ==========================================

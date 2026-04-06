@@ -17,6 +17,31 @@ from app.agents.supervisor import human_review_node
 
 # 注意：删除了 continuity_editor 的引入和 editor_router 函数
 
+def planner_router(state: TomatoNovelState) -> str:
+    """🌟 智能前置大纲路由：决定每次发车时的图入口节点"""
+    current_chapter_num = state.get("current_chapter_num", 1)
+    book_outline = state.get("book_outline_context", "")
+
+    # 1. 如果连全书总纲都没有，说明是新书第一章，进入全书规划
+    if not book_outline or book_outline.strip() == "":
+        print("🔀 [Router] 智能路由分配：新书首发 -> Book_Planner")
+        return "Book_Planner"
+
+    # 2. 如果是新的分卷（例如每 30 章一卷，第 1, 31, 61 章）
+    if (current_chapter_num - 1) % 30 == 0:
+        print(f"🔀 [Router] 智能路由分配：新卷开启 (第 {current_chapter_num} 章) -> Volume_Planner")
+        return "Volume_Planner"
+
+    # 3. 如果是新的单期（例如每 10 章一期，第 1, 11, 21 章）
+    if (current_chapter_num - 1) % 10 == 0:
+        print(f"🔀 [Router] 智能路由分配：新期开启 (第 {current_chapter_num} 章) -> Phase_Planner")
+        return "Phase_Planner"
+
+    # 4. 普通章节连载，直接跳过前三层规划器，空投到单章节拍器
+    print(f"🔀 [Router] 智能路由分配：常规连载 (第 {current_chapter_num} 章) -> Chapter_Planner")
+    return "Chapter_Planner"
+
+
 def human_review_router(state: TomatoNovelState) -> Literal["Memory_Keeper", "Chapter_Writer"]:
     status = state.get("human_approval_status", "PENDING").upper()
     if status == "APPROVED":
@@ -38,7 +63,10 @@ def build_workflow() -> StateGraph:
     workflow.add_node("Human_Review", human_review_node)
     workflow.add_node("Memory_Keeper", memory_keeper_node)
 
-    workflow.add_edge(START, "Book_Planner")
+    # 🌟 修改核心：将硬编码的 workflow.add_edge(START, "Book_Planner") 替换为条件路由
+    workflow.add_conditional_edges(START, planner_router)
+
+    # 保留内部的顺序级联，如果从高层(如Book_Planner)进入，执行完会自动往下层走
     workflow.add_edge("Book_Planner", "Volume_Planner")
     workflow.add_edge("Volume_Planner", "Phase_Planner")
     workflow.add_edge("Phase_Planner", "Chapter_Planner")
