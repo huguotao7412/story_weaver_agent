@@ -27,7 +27,7 @@ class BookOutline(BaseModel):
 
 class PhaseDetail(BaseModel):
     """单期详情 (前、中、后期)"""
-    phase_name: str = Field(description="时期名称，必须是：前期、中期、或后期")
+    phase_name: str = Field(description="时期名称，例如：第1期-潜龙在渊，第5期-腰部高潮")
     plot_mission: str = Field(description="本期的核心剧情任务和转折点")
 
 class VolumePhases(BaseModel):
@@ -39,6 +39,7 @@ class ChapterSummary(BaseModel):
     """单章剧情核心摘要"""
     chapter_number: int = Field(description="预期章节号")
     core_conflict: str = Field(description="本章的核心冲突、看点或主线推进任务")
+    tension_level: str = Field(description="本章的情绪节奏标签，必须是: Low(舒缓/日常), Medium(蓄力/探索), High(爆发/高潮)")
 
 class PhaseChapters(BaseModel):
     """🗺️ 第三层：单期十章协议"""

@@ -15,9 +15,9 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 1. 📱 手机阅读排版：绝对禁止大段文字！每段话尽量不要超过 3-4 行。多用短句，多回车换行。
 2. 🎬 镜头感与白描：禁止干巴巴的“总结式叙述”（Show, don't tell）。不要说“他很生气”，要写“他猛地攥紧拳头，指甲嵌进肉里，眼底爬满血丝”。
 3. 🗣️ 对话驱动：剧情推进要多靠角色之间的对话、动作和神态拉扯来完成。
-4. 💥 情绪拉满：主角的装逼打脸必须干脆利落，反派的嘲讽要令人牙痒，不要写温吞水的过渡剧情。
-5. 🪝 悬念意识：永远记得在章节结尾卡在最关键、最让人抓心挠肝的地方（断章狗技巧）。
-6. 🪝 断章狗技巧（绝对禁止总结升华）：这是一本正在连载的长篇小说！章节结尾绝对不要做任何“剧情总结”、“人生感悟”或“主角的内心升华”！结尾一般可以是戛然而止的动作或者叙事、突发的危机、或者反派刚露出一角的阴谋！
+4. 💥 情绪表现：打脸情节必须干脆利落；如果是日常和结算，则要重点描写围观群众的震惊和主角的深藏不露。
+5. 🪝 【本章专属节奏与钩子指令】：
+{dynamic_hook_rule}
 
 【🚨 终极输出红线（违背将遭受降级惩罚）】：
 你生成的必须是**纯粹的小说正文文本**！
@@ -45,6 +45,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     current_beat_sheet = state.get("current_beat_sheet", "暂无大纲。")
     current_draft = state.get("draft_content", "")
     history_context = state.get("rag_history_context", "暂无历史剧情。")
+    current_chapter_num = state.get("current_chapter_num", 1)
 
     # 🌟 提取跨章节状态继承的画面结尾钩子
     prev_ending = state.get("previous_chapter_ending", "")
@@ -59,10 +60,23 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
 
     messages_history = state.get("messages", [])
 
+    # 🌟 核心修改点：提取当前章节号，并计算动态钩子规则
+    idx = (current_chapter_num - 1) % 10
+
+    if idx in [0, 1, 2]:
+        dynamic_hook_rule = "本章是【舒缓/日常期】。结尾绝不要制造生死危机，请用温馨、期待、或发现小秘密的画面作为自然收尾。"
+    elif idx in [3, 4, 5]:
+        dynamic_hook_rule = "本章是【蓄力/探索期】。结尾请抛出一个悬疑感极强的钩子，比如推开一扇门、某人一句意味深长的话，引导读者期待下一章。"
+    elif idx in [6, 7, 8]:
+        dynamic_hook_rule = "本章是【爆发/高潮期】。使用断章狗技巧！章节结尾必须卡在最关键、最抓心挠肝的生死瞬间，或反派即将亮出杀招的一刻！"
+    else:  # idx == 9 (第10章)
+        dynamic_hook_rule = "本章是【结算/余波期】。高潮已过，【绝对禁止】在结尾引出新的危机！结尾应该是战利品清点后的满足，或对下一段旅程的从容眺望。"
+
     sys_prompt = WRITER_SYSTEM_PROMPT.format(
         world_bible=world_bible,
         history_context=history_context,
         style_guide=style_guide,
+        dynamic_hook_rule=dynamic_hook_rule  # 🌟 注入动态规则
     )
 
     human_status = state.get("human_approval_status")
@@ -79,7 +93,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
         )
     else:
         print(
-            f"✍️ [Chapter-Writer] 正在后台疯狂码字生成第 {state.get('current_chapter_num', 1)} 章正文 (日志已静音)...")
+            f"✍️ [Chapter-Writer] 正在后台疯狂码字生成第 {current_chapter_num} 章正文 (日志已静音)...")
 
         # 🌟 动态注入场景接轨指令
         scene_hook_prompt = ""
@@ -111,7 +125,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
         new_draft += chunk.content
 
     action_message = AIMessage(
-        content=f"[Chapter-Writer] 第 {state.get('current_chapter_num', 1)} 章正文草稿已生成，字数：{len(new_draft)}。",
+        content=f"[Chapter-Writer] 第 {current_chapter_num} 章正文草稿已生成，字数：{len(new_draft)}。",
         name="Chapter_Writer"
     )
 

@@ -22,22 +22,20 @@ def planner_router(state: TomatoNovelState) -> str:
     current_chapter_num = state.get("current_chapter_num", 1)
     book_outline = state.get("book_outline_context", "")
 
-    # 1. 如果连全书总纲都没有，说明是新书第一章，进入全书规划
     if not book_outline or book_outline.strip() == "":
         print("🔀 [Router] 智能路由分配：新书首发 -> Book_Planner")
         return "Book_Planner"
 
-    # 2. 如果是新的分卷（例如每 30 章一卷，第 1, 31, 61 章）
-    if (current_chapter_num - 1) % 30 == 0:
+    # 🌟 修改点：将 30 改为 100，实现 100 章一卷的大地图跨度
+    if (current_chapter_num - 1) % 100 == 0:
         print(f"🔀 [Router] 智能路由分配：新卷开启 (第 {current_chapter_num} 章) -> Volume_Planner")
         return "Volume_Planner"
 
-    # 3. 如果是新的单期（例如每 10 章一期，第 1, 11, 21 章）
+    # 保持 10 章一期不变
     if (current_chapter_num - 1) % 10 == 0:
         print(f"🔀 [Router] 智能路由分配：新期开启 (第 {current_chapter_num} 章) -> Phase_Planner")
         return "Phase_Planner"
 
-    # 4. 普通章节连载，直接跳过前三层规划器，空投到单章节拍器
     print(f"🔀 [Router] 智能路由分配：常规连载 (第 {current_chapter_num} 章) -> Chapter_Planner")
     return "Chapter_Planner"
 
