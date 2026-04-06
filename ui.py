@@ -167,6 +167,7 @@ with st.sidebar:
 # ==========================================
 # 🌟 流式 API 调用与反馈机制
 # ==========================================
+# === 🌟 流式 API 调用与反馈机制 ===
 def start_generation_stream(user_input, chapter_num):
     st.session_state.app_stage = "RUNNING"
 
@@ -193,7 +194,7 @@ def start_generation_stream(user_input, chapter_num):
 
                             if "error" in data:
                                 st.error(f"后端执行报错: {data['error']}")
-                                break
+                                st.stop()  # 🌟 核心修改点：将 break 改为 st.stop()，强行终止当前页面的后续渲染（包括底部的状态判定和可能触发的 rerun），让报错信息停留在页面上！
 
                             # 处理节点进度展示
                             if "node" in data:

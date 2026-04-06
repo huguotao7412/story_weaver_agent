@@ -30,7 +30,7 @@ LAYER1_BOOK_PROMPT = """你是一个白金级网文【全书总架构师】。
 【极其重要】：JSON 的所有键名（Keys）必须完全使用系统定义的英文原始字段名（如 world_bible, volumes 等），绝对禁止翻译为中文或自行修改键名！绝对禁止输出任何 Markdown 代码块（如 ```json ），禁止包含任何前缀或后缀废话！
 """
 
-# 2. 第二层：分卷三期 (前、中、后)
+# 2. 第二层：
 LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
 你的任务是提取《全书总纲》中【第 {current_volume_num} 卷】的核心目标，将其严格切分为【10期】（每期约10章，共100章）。
 
@@ -221,7 +221,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
     if volume_phases and volume_phases.strip() != "" and not is_new_volume:
         return {"is_volume_initialized": True}
 
-    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在将本卷切分为【前、中、后】三期...")
+    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在将本卷切分为【十期】...")
 
     llm = get_llm(model_type="main", temperature=0.3)
     book_outline = state.get("book_outline_context", "暂无总纲")
@@ -233,7 +233,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
                 book_outline=book_outline,
                 current_volume_num=current_volume_num
             )),
-            HumanMessage(content="请生成当前分卷的三期拆解大纲。")
+            HumanMessage(content="请生成当前分卷的十期拆解大纲。")
         ])
         phase_json = json.dumps(phase_result.model_dump(), ensure_ascii=False, indent=2)
         if current_chapter_num > 1 and is_new_volume:
@@ -408,7 +408,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
         chapter_num=current_chapter_num,
         human_override_instruction=human_override_instruction,  # 🌟 注入上帝指令！
         power_system_rules=power_rules,
-        world_lore=world_bible,
+        world_bible=world_bible,
         volume_phases=focused_volume_phases,
         phase_chapters=phase_chapters,
         kv_state=current_kv_state,

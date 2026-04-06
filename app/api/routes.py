@@ -4,6 +4,7 @@ import os
 import json
 import shutil
 import aiosqlite
+import traceback
 from typing import Optional, Literal, Dict, Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -119,27 +120,23 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟
                     "book_id": req.thread_id
                 }
 
-                # 🌟 修改点 2：跨章节状态继承逻辑 (核心修复！)
+                # 🌟 跨章节状态继承逻辑
                 old_values = {}
                 if req.chapter_num > 1:
-                    # 如果是第二章及以后，去【上一章】的图状态里捞取历史大纲和画面钩子
                     prev_config = {"configurable": {"thread_id": f"{req.thread_id}_chap_{req.chapter_num - 1}"}}
                     prev_state = await storyweaver_app.aget_state(prev_config)
                     if prev_state and prev_state.values:
                         old_values = prev_state.values
                 elif current_state and current_state.values:
-                    # 如果是本章断点重试，则继承当前已有的状态
                     old_values = current_state.values
 
                 # 从捞取到的历史状态中恢复关键记忆
                 if old_values:
-                    # 继承前三层规划和上一章结尾画面
                     for key in ["book_outline_context", "current_volume_phases",
                                 "current_phase_chapters", "previous_chapter_ending"]:
                         if key in old_values:
                             run_input[key] = old_values[key]
 
-                    # 核心防遗忘：继承世界观和文风（前提是本次请求没有传新的覆盖它）
                     if "world_bible_context" in old_values and not req.predefined_world_bible:
                         run_input["world_bible_context"] = old_values["world_bible_context"]
                     if "target_writing_style" in old_values and not req.target_writing_style:
@@ -170,9 +167,14 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟
                 elif mode == "updates":
                     node_name = list(payload_data.keys())[0]
                     state_updates = payload_data[node_name]
-                    safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
-                    payload = {"node": node_name, "updates": safe_updates}
-                    yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+                    # 🌟 核心修复点：防御性编程，确保 state_updates 是字典才执行 .items()
+                    if isinstance(state_updates, dict):
+                        safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
+                        payload = {"node": node_name, "updates": safe_updates}
+                        yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+                    else:
+                        print(f"⚠️ [跳过解析] 节点 {node_name} 的状态更新不是字典格式，跳过传给前端。")
 
             # 探测断点位置并给前端发送挂起信号
             new_state = await storyweaver_app.aget_state(config)
@@ -183,6 +185,8 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟
                     yield "data: {\"status\": \"PAUSED_FOR_HUMAN_REVIEW\"}\n\n"
 
         except Exception as e:
+            # 🌟 核心监控：将异常的完整堆栈打印在后端终端，绝不让它再“静默消失”
+            traceback.print_exc()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

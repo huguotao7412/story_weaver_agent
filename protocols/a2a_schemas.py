@@ -27,14 +27,14 @@ class BookOutline(BaseModel):
     volumes: List[VolumeSummary] = Field(description="规划出的10个分卷大纲列表")
 
 class PhaseDetail(BaseModel):
-    """单期详情 (前、中、后期)"""
+    """单期详情 (十期之一)"""
     phase_name: str = Field(description="时期名称，例如：第1期-潜龙在渊，第5期-腰部高潮")
     plot_mission: str = Field(description="本期的核心剧情任务和转折点")
 
 class VolumePhases(BaseModel):
-    """🗺️ 第二层：分卷三期协议"""
+    """🗺️ 第二层：分卷十期协议"""
     current_volume_name: str = Field(description="当前正在拆解的卷名")
-    phases: List[PhaseDetail] = Field(description="包含前期、中期、后期的详细任务拆解")
+    phases: List[PhaseDetail] = Field(description="包含 10 期的详细任务拆解")
 
 class ChapterSummary(BaseModel):
     """单章剧情核心摘要"""
