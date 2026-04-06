@@ -241,9 +241,13 @@ def start_generation_stream(user_input, chapter_num):
 
 def send_beat_feedback(edited_beat, reject=False):
     if reject:
+        if "user_edited_beat" in st.session_state:
+            del st.session_state["user_edited_beat"]
         st.session_state.app_stage = "IDLE"
         st.session_state.current_beat_sheet = ""
         return
+    if "user_edited_beat" in st.session_state:
+        del st.session_state["user_edited_beat"]
 
     payload = {
         "thread_id": st.session_state.thread_id,
@@ -270,9 +274,15 @@ def send_draft_feedback(approval_status, feedback_text, direct_edits):
 
     if res.status_code == 200:
         if approval_status == "REJECTED":
+            if "user_edited_draft" in st.session_state:
+                del st.session_state["user_edited_draft"]
             st.session_state.draft_content = "" # 打回重写时清空旧草稿
             start_generation_stream("", st.session_state.current_chapter_num)
         else:
+            if "user_edited_draft" in st.session_state:
+                del st.session_state["user_edited_draft"]
+            if "user_edited_beat" in st.session_state:
+                del st.session_state["user_edited_beat"]
             st.session_state.app_stage = "IDLE"
             st.session_state.current_chapter_num += 1
             st.session_state.plot_prompt_input = ""

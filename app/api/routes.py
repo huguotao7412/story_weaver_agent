@@ -33,7 +33,7 @@ class GenerateRequest(BaseModel):
 
 
 class StyleRequest(BaseModel):
-    reference_text: str
+    reference_text: Optional[str] = ""
     reference_filename: Optional[str] = ""
 
 
