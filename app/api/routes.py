@@ -10,11 +10,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
-# 🌟 新增：导入异步版 SqliteSaver 和配置
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from app.core.config import settings
 from app.agents.workers.style_analyzer import style_analyzer_node
-from app.agents.graph import build_workflow  # 导入工厂函数
 
 router = APIRouter(prefix="/novel", tags=["Novel Workflow"])
 
@@ -104,52 +101,57 @@ async def get_book_progress(book_id: str):
 # === 核心接口 1：流式启动节点 (异步升级版) ===
 @router.post("/stream")
 async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟 添加 request 依赖
-    graph_thread_id = req.thread_id
+    graph_thread_id = f"{req.thread_id}_chap_{req.chapter_num}"
     config = {"configurable": {"thread_id": graph_thread_id}}
-
-    # 🌟 核心修改：直接从全局获取记忆池，避免在此处重新创建销毁
-    memory = request.app.state.checkpoint_saver
 
     async def event_generator():
         try:
-            # 🌟 核心修改：去掉了 async with 块，下面的代码整体向左缩进一层
             storyweaver_app = request.app.state.storyweaver_app
 
-            # 获取当前这本书在数据库里的沉淀状态
+            # 获取当前【本章】在数据库里的沉淀状态
             current_state = await storyweaver_app.aget_state(config)
 
             if not current_state.next:
-                # 🌟 场景 A：这是一本新书，或者上一章已经顺利跑到 END 完结了
+                # 🌟 场景 A：这是本章的第一次运行
                 run_input = {
                     "messages": [HumanMessage(content=req.user_input)],
                     "current_chapter_num": req.chapter_num,
                     "book_id": req.thread_id
                 }
-                if current_state and current_state.values:
+
+                # 🌟 修改点 2：跨章节状态继承逻辑 (核心修复！)
+                old_values = {}
+                if req.chapter_num > 1:
+                    # 如果是第二章及以后，去【上一章】的图状态里捞取历史大纲和画面钩子
+                    prev_config = {"configurable": {"thread_id": f"{req.thread_id}_chap_{req.chapter_num - 1}"}}
+                    prev_state = await storyweaver_app.aget_state(prev_config)
+                    if prev_state and prev_state.values:
+                        old_values = prev_state.values
+                elif current_state and current_state.values:
+                    # 如果是本章断点重试，则继承当前已有的状态
                     old_values = current_state.values
 
-                    # 核心防遗忘：继承前三层规划
-                    if "book_outline_context" in old_values:
-                        run_input["book_outline_context"] = old_values["book_outline_context"]
-                    if "current_volume_phases" in old_values:
-                        run_input["current_volume_phases"] = old_values["current_volume_phases"]
-                    if "current_phase_chapters" in old_values:
-                        run_input["current_phase_chapters"] = old_values["current_phase_chapters"]
+                # 从捞取到的历史状态中恢复关键记忆
+                if old_values:
+                    # 继承前三层规划和上一章结尾画面
+                    for key in ["book_outline_context", "current_volume_phases",
+                                "current_phase_chapters", "previous_chapter_ending"]:
+                        if key in old_values:
+                            run_input[key] = old_values[key]
 
                     # 核心防遗忘：继承世界观和文风（前提是本次请求没有传新的覆盖它）
                     if "world_bible_context" in old_values and not req.predefined_world_bible:
                         run_input["world_bible_context"] = old_values["world_bible_context"]
                     if "target_writing_style" in old_values and not req.target_writing_style:
                         run_input["target_writing_style"] = old_values["target_writing_style"]
-                    # ==============================================================
 
-                    # 如果用户在前端强制传了新的世界观或文风，则覆盖进去
+                # 覆盖用户在前端强制传的最新设定
                 if req.predefined_world_bible and req.predefined_world_bible.strip():
                     run_input["world_bible_context"] = req.predefined_world_bible
                 if req.target_writing_style:
                     run_input["target_writing_style"] = req.target_writing_style
             else:
-                # 🌟 场景 B：图处于被挂起的状态
+                # 🌟 场景 B：图处于被挂起的状态 (直接唤醒)
                 run_input = None
 
             # 启动数据流转
@@ -188,11 +190,8 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟
 # === 核心接口 2：接收人类总编反馈并唤醒 (双断点分流修复版) ===
 @router.post("/feedback")
 async def receive_human_feedback(req: FeedbackRequest, request: Request):  # 🌟 添加 request 依赖
-    graph_thread_id = req.thread_id
+    graph_thread_id = f"{req.thread_id}_chap_{req.chapter_num}"
     config = {"configurable": {"thread_id": graph_thread_id}}
-
-    # 🌟 核心修改：直接从全局获取记忆池
-    memory = request.app.state.checkpoint_saver
 
     try:
         # 🌟 核心修改：去掉了 async with 块，下面的代码整体向左缩进一层
