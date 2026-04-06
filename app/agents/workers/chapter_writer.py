@@ -8,8 +8,11 @@ from app.memory.rag_engine import RAGEngine
 from app.core.llm_factory import get_llm
 from langchain_core.runnables import RunnableConfig
 
+# 🌟 修改点 1：顶部注入人类上帝指令占位符
 WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场的【网文金牌主笔】。
 你的码字速度极快，且深谙“网文爽点心理学”与“下沉市场阅读习惯”。
+
+{human_override_instruction}
 
 【核心写作军规 - 必须刻在骨子里】：
 1. 📱 手机阅读排版：绝对禁止大段文字！每段话尽量不要超过 3-4 行。多用短句，多回车换行。
@@ -47,7 +50,6 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     history_context = state.get("rag_history_context", "暂无历史剧情。")
     current_chapter_num = state.get("current_chapter_num", 1)
 
-    # 🌟 提取跨章节状态继承的画面结尾钩子
     prev_ending = state.get("previous_chapter_ending", "")
 
     target_style_obj = state.get("target_writing_style", {})
@@ -60,7 +62,23 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
 
     messages_history = state.get("messages", [])
 
-    # 🌟 核心修改点：提取当前章节号，并计算动态钩子规则
+    # 🌟 修改点 2：在主笔端同样提取前端最新剧情指令
+    latest_user_instruction = ""
+    for msg in reversed(messages_history):
+        if isinstance(msg, HumanMessage) and getattr(msg, "name", "") != "Human_Editor":
+            latest_user_instruction = msg.content
+            break
+
+    # 组装高优先级覆写文本
+    human_override_instruction = ""
+    if latest_user_instruction and latest_user_instruction.strip() and latest_user_instruction.strip() not in ["请按网文套路推进", ""]:
+        human_override_instruction = (
+            f"🔥【人类上帝指令 (God Command Override)】🔥\n"
+            f"人类总编刚刚下达了本章的特定诉求：\n《{latest_user_instruction}》\n"
+            f"🚨 警告：下方【本章专属节奏与钩子指令】属于系统级约束，但【人类指令高于一切】！如果总编要求大开杀戒，就算系统要求温馨收尾，也必须见血！一切以总编的诉求为绝对准则！\n"
+            f"====================================================\n"
+        )
+
     idx = (current_chapter_num - 1) % 10
 
     if idx in [0, 1, 2]:
@@ -69,14 +87,16 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
         dynamic_hook_rule = "本章是【蓄力/探索期】。结尾请抛出一个悬疑感极强的钩子，比如推开一扇门、某人一句意味深长的话，引导读者期待下一章。"
     elif idx in [6, 7, 8]:
         dynamic_hook_rule = "本章是【爆发/高潮期】。使用断章狗技巧！章节结尾必须卡在最关键、最抓心挠肝的生死瞬间，或反派即将亮出杀招的一刻！"
-    else:  # idx == 9 (第10章)
+    else:
         dynamic_hook_rule = "本章是【结算/余波期】。高潮已过，【绝对禁止】在结尾引出新的危机！结尾应该是战利品清点后的满足，或对下一段旅程的从容眺望。"
 
+    # 🌟 修改点 3：将 human_override_instruction 注入 Writer 的系统 Prompt
     sys_prompt = WRITER_SYSTEM_PROMPT.format(
+        human_override_instruction=human_override_instruction, # 🌟 注入上帝指令！
         world_bible=world_bible,
         history_context=history_context,
         style_guide=style_guide,
-        dynamic_hook_rule=dynamic_hook_rule  # 🌟 注入动态规则
+        dynamic_hook_rule=dynamic_hook_rule
     )
 
     human_status = state.get("human_approval_status")
@@ -95,7 +115,6 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
         print(
             f"✍️ [Chapter-Writer] 正在后台疯狂码字生成第 {current_chapter_num} 章正文 (日志已静音)...")
 
-        # 🌟 动态注入场景接轨指令
         scene_hook_prompt = ""
         if prev_ending:
             scene_hook_prompt = (
@@ -119,7 +138,6 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     formatted_messages.extend(recent_history)
     formatted_messages.append(HumanMessage(content=instruction))
 
-    # 🌟 取消打印刷屏，静音生成
     new_draft = ""
     async for chunk in llm.astream(formatted_messages, config=config):
         new_draft += chunk.content

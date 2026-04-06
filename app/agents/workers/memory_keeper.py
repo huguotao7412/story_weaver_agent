@@ -1,6 +1,6 @@
 # app/agents/workers/memory_keeper.py
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List,Literal
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage, AIMessage
@@ -39,13 +39,19 @@ class ResolvedThread(BaseModel):
     thread_id: int = Field(description="成功填上的伏笔坑的 ID (必须是系统提供的 ID 数字)")
     reason: str = Field(description="简述是如何解决的（例如：主角本章一剑斩杀了反派，大仇得报）")
 
+class NewThread(BaseModel):
+    content: str = Field(description="伏笔/悬念/仇恨的具体描述")
+    priority: Literal["High", "Medium", "Low"] = Field(description="High:生死大仇/主线; Medium:支线任务/长期约定; Low:日常小坑/未解物品")
+    keywords: List[str] = Field(description="该伏笔涉及的2-3个核心实体关键词（人名/地名/物品）")
+    related_map: str = Field(description="该伏笔绑定的宏观大地图名称，如果是贯穿全书的主线请填'全局'")
 
 class MemoryExtraction(BaseModel):
     map_update: MapUpdate = Field(description="主角宏观地图变更检测")
     character_updates: List[CharacterUpdate] = Field(default_factory=list, description="角色状态变更")
     item_updates: List[ItemUpdate] = Field(default_factory=list, description="物品状态变更")
-    new_mysteries: List[str] = Field(default_factory=list,
-                                     description="【挖坑】本章新挖的悬念坑、未解之谜、新结的死仇或长期约定（明确清晰的陈述）")
+    new_mysteries: List[NewThread] = Field(default_factory=list,
+                                           description="【挖坑】本章新挖的悬念坑、未解之谜、新结的死仇或长期约定。必须严格分类和打标！")
+
     resolved_mysteries: List[ResolvedThread] = Field(default_factory=list,
                                                      description="【填坑】对照现有的伏笔池，本章成功彻底解决掉的伏笔")
     global_events: List[str] = Field(default_factory=list, description="其他对世界观有影响的全局客观大事件")
@@ -57,12 +63,16 @@ class MemoryExtraction(BaseModel):
 MEMORY_EXTRACTION_PROMPT = """你是一个专业的网文【记忆更新员】（Metadata Tracker）。
 主笔刚刚完成了一章的定稿，你的任务是从这几千字的正文中，提取出对长线剧情有影响的“状态变更”与“伏笔更迭”。
 
+【🚨 极其重要：境界数值拦截】：
+参考当前战力体系：\n{power_system_rules}\n
+如果本章出现角色境界变更，请务必校验其变更是否符合上述规则！绝不允许出现设定外的新境界！
+
 【百万字长篇特殊指令】：
 1. 🗺️ 换地图检测 (Map Update)：若跨越宏观大区域，务必触发。
 2. 🔥 核心角色打标 (Core Character)：主角团/核心宠物设为 is_core=True。
-3. 🕳️ 挖坑与填坑 (Foreshadowing & Mysteries)：这是长篇小说的灵魂！
-   - 【挖坑】：如果本章主角惹了新的大敌、接了有时限的任务、发现了神秘未解的物品，请将其提取到 new_mysteries 中。
-   - 【填坑】：我会提供一个【当前未解伏笔池】，如果本章的剧情彻底终结了池子中的某个伏笔（如杀死了仇人、赴了三年之约），请将其 ID 和解决方式提取到 resolved_mysteries 中。如果没有填坑，请留空。
+3. 🕳️ 挖坑与填坑 (Foreshadowing & Mysteries)：
+   - 【挖坑】：如果本章主角惹了新的大敌、接了任务，请将其提取为 new_mysteries，并严格评估其优先级(High/Medium/Low)和绑定地图！
+   - 【填坑】：对照现有的伏笔池，解决掉的提取到 resolved_mysteries 中。
 
 请务必精准判断，不要将日常的小事当成大伏笔，也不要漏掉真正影响主线的大悬念。
 """
@@ -83,16 +93,19 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         return {}
 
     tracker = KVTracker(book_id=current_book_id)  # 🌟 隔离实例
-    active_threads_snapshot = tracker.get_active_threads_snapshot()
+    current_map = tracker.get_global_map()
+    power_rules = tracker.get_power_system_rules()
+    active_threads_snapshot = tracker.get_active_threads_snapshot(current_map=current_map)
+
+    prompt_messages = [
+        SystemMessage(content=MEMORY_EXTRACTION_PROMPT.format(power_system_rules=power_rules)),
+        HumanMessage(
+            content=f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n【第 {chapter_num} 章定稿正文】：\n{draft}\n\n请提取状态变更与伏笔。")
+    ]
 
     llm = get_llm(model_type="main", temperature=0.1)
     structured_llm = llm.with_structured_output(MemoryExtraction, method="function_calling")
 
-    prompt_messages = [
-        SystemMessage(content=MEMORY_EXTRACTION_PROMPT),
-        HumanMessage(
-            content=f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n【第 {chapter_num} 章定稿正文】：\n{draft}\n\n请提取状态变更与伏笔。")
-    ]
 
     memory_updates = None
     max_retries = 3
@@ -124,8 +137,9 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             tracker.update_inventory(iu.owner, iu.item_name, iu.action, chapter_num)
 
         for mystery in memory_updates.new_mysteries:
-            tracker.add_unresolved_thread(mystery, chapter_num)
-            print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨: {mystery}")
+            mystery_dict = mystery.model_dump()
+            tracker.add_unresolved_thread(mystery_dict, chapter_num)
+            print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨 [{mystery_dict['priority']}]: {mystery_dict['content']}")
 
         valid_threads = tracker.threads_table.all()
         valid_ids = [t.doc_id for t in valid_threads]

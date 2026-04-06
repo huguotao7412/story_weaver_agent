@@ -136,12 +136,31 @@ class KVTracker:
             return snapshot
 
     # ==========================================
+    # ⚖️ 全局战力铁律管理 (新增)
+    # ==========================================
+
+    def set_power_system_rules(self, rules: str):
+        State = Query()
+        self.system_table.upsert(
+            {"key": "power_system_rules", "value": rules},
+            State.key == "power_system_rules"
+        )
+
+    def get_power_system_rules(self) -> str:
+        State = Query()
+        record = self.system_table.search(State.key == "power_system_rules")
+        return record[0]["value"] if record else "（暂无战力设定）"
+
+    # ==========================================
     # 🕳️ 伏笔池：挖坑与填坑管理
     # ==========================================
-    def add_unresolved_thread(self, content: str, chapter_num: int):
-        """挖坑：记录新的悬念或死仇"""
+    def add_unresolved_thread(self, thread_data: dict, chapter_num: int):
+        """挖坑：记录结构化的悬念或死仇"""
         self.threads_table.insert({
-            "content": content,
+            "content": thread_data["content"],
+            "priority": thread_data.get("priority", "Medium"),
+            "keywords": thread_data.get("keywords", []),
+            "related_map": thread_data.get("related_map", "未知"),
             "created_in_chapter": chapter_num
         })
 
@@ -152,14 +171,44 @@ class KVTracker:
         except Exception as e:
             print(f"⚠️ [KVTracker] 尝试移除不存在的伏笔 ID {thread_id}: {e}")
 
-    def get_active_threads_snapshot(self) -> str:
-        """获取当前所有未解伏笔，附带唯一 ID，供大模型阅读"""
+    def get_active_threads_snapshot(self, current_map: str, query_keywords: str = "") -> str:
+        """【过滤引擎】根据优先级和地图动态召回伏笔，防止上下文污染"""
         threads = self.threads_table.all()
         if not threads:
             return "（当前暂无未解悬念与未报之仇）"
 
-        snapshot = "【🕳️ 当前未解伏笔/悬念/仇恨池】：\n"
+        filtered_threads = []
+        hidden_count = 0
+
         for t in threads:
-            # TinyDB 会自动为每条记录生成 doc_id
-            snapshot += f"- [ID: {t.doc_id}] (第{t['created_in_chapter']}章立下) {t['content']}\n"
+            priority = t.get("priority", "Medium")
+            related_map = t.get("related_map", "全局")
+
+            # 过滤逻辑：
+            # 1. High 级别绝对保留
+            # 2. 地图匹配 或 属于'全局'的保留
+            # 3. 极其粗略的关键词命中保留
+            if priority == "High" or related_map in ["全局", current_map] or any(
+                    k in query_keywords for k in t.get("keywords", [])):
+                filtered_threads.append(t)
+            else:
+                hidden_count += 1
+
+        # 排序：High 永远在最前面
+        priority_map = {"High": 0, "Medium": 1, "Low": 2}
+        filtered_threads.sort(key=lambda x: priority_map.get(x.get("priority", "Medium"), 1))
+
+        # 截断：最多只喂给 LLM 5 个最相关的伏笔
+        MAX_THREADS_TO_SHOW = 5
+        final_threads = filtered_threads[:MAX_THREADS_TO_SHOW]
+
+        snapshot = f"【🕳️ 动态召回未解伏笔池 (已隐藏 {hidden_count + max(0, len(filtered_threads) - MAX_THREADS_TO_SHOW)} 个非活跃跨地图小坑)】：\n"
+        if not final_threads:
+            return snapshot + "- 当前地图暂无待解决悬念\n"
+
+        for t in final_threads:
+            p_tag = "🔴主线死仇" if t.get('priority') == 'High' else (
+                "🟡支线" if t.get('priority') == 'Medium' else "🟢日常")
+            snapshot += f"- [ID: {t.doc_id}] {p_tag} (第{t['created_in_chapter']}章立下) {t['content']}\n"
+
         return snapshot

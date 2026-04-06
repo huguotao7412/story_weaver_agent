@@ -1,6 +1,6 @@
 # protocols/a2a_schemas.py
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Literal
 
 class StyleGuide(BaseModel):
     """🎭 文风白皮书协议：Style-Analyzer 提取并传递给全图"""
@@ -22,7 +22,8 @@ class VolumeSummary(BaseModel):
 
 class BookOutline(BaseModel):
     """🗺️ 第一层：全书总纲协议 (10卷)"""
-    world_bible: str = Field(description="《世界观圣经》，包含核心设定、力量体系、主角人设")
+    world_lore: str = Field(description="《世界观风土人情》，包含历史背景、地理环境、势力分布等宏观设定")
+    power_system_rules: str = Field(description="《境界战力铁律》，【极其重要】必须严格列出完整的境界等级划分、战力天花板、以及不可轻易就出现越级秒杀的规则")
     volumes: List[VolumeSummary] = Field(description="规划出的10个分卷大纲列表")
 
 class PhaseDetail(BaseModel):
