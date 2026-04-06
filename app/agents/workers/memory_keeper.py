@@ -163,7 +163,9 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             "human_approval_status": "PENDING",
             "human_feedback": "",
             "previous_chapter_ending": prev_ending,
-            "messages": delete_messages
+            "messages": delete_messages,
+            "current_beat_sheet": "",
+            "draft_content": ""
         }
 
     except Exception as e:

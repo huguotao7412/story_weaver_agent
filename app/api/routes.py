@@ -1,4 +1,3 @@
-# 定义 /novel/stream (流式生成) 与 /novel/feedback (接收总编意见)
 # app/api/routes.py
 
 import os
@@ -6,7 +5,7 @@ import json
 import shutil
 import aiosqlite
 from typing import Optional, Literal, Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
@@ -104,122 +103,130 @@ async def get_book_progress(book_id: str):
 
 # === 核心接口 1：流式启动节点 (异步升级版) ===
 @router.post("/stream")
-async def generate_novel_stream(req: GenerateRequest):
-    # 🌟 核心修复 1：统一使用书名作为唯一 Thread ID，打通全书上下文
+async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟 添加 request 依赖
     graph_thread_id = req.thread_id
     config = {"configurable": {"thread_id": graph_thread_id}}
 
+    # 🌟 核心修改：直接从全局获取记忆池，避免在此处重新创建销毁
+    memory = request.app.state.checkpoint_saver
+
     async def event_generator():
         try:
-            async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
-                workflow = build_workflow()
-                storyweaver_app = workflow.compile(
-                    checkpointer=memory,
-                    interrupt_before=["Chapter_Writer", "Human_Review"]
-                )
+            # 🌟 核心修改：去掉了 async with 块，下面的代码整体向左缩进一层
+            storyweaver_app = request.app.state.storyweaver_app
 
-                # 获取当前这本书在数据库里的沉淀状态
-                current_state = await storyweaver_app.aget_state(config)
+            # 获取当前这本书在数据库里的沉淀状态
+            current_state = await storyweaver_app.aget_state(config)
 
-                if not current_state.next:
-                    # 🌟 场景 A：这是一本新书，或者上一章已经顺利跑到 END 完结了
-                    run_input = {
-                        "messages": [HumanMessage(content=req.user_input)],
-                        "current_chapter_num": req.chapter_num,
-                        "book_id": req.thread_id
-                    }
-                    # 仅在首次或用户有显式预设时才注入全局属性，其余时间靠 LangGraph 原生记忆自然继承
-                    if req.predefined_world_bible and req.predefined_world_bible.strip():
-                        run_input["world_bible_context"] = req.predefined_world_bible
-                    if req.target_writing_style:
-                        run_input["target_writing_style"] = req.target_writing_style
-                else:
-                    # 🌟 场景 B：图处于被挂起的状态（比如人类总编正在审核大纲或打回重写），此时只需传 None 唤醒继续执行
-                    run_input = None
+            if not current_state.next:
+                # 🌟 场景 A：这是一本新书，或者上一章已经顺利跑到 END 完结了
+                run_input = {
+                    "messages": [HumanMessage(content=req.user_input)],
+                    "current_chapter_num": req.chapter_num,
+                    "book_id": req.thread_id
+                }
+                if current_state and current_state.values:
+                    old_values = current_state.values
 
-                # 启动数据流转 (配合双流模式打字机)
-                async for chunk in storyweaver_app.astream(run_input,
-                                                           config=config,
-                                                           stream_mode=["updates", "messages"]):
-                    # chunk 是一个元组: (模式名称, 负载数据)
-                    mode = chunk[0]
-                    payload_data = chunk[1]
+                    # 核心防遗忘：继承前三层规划
+                    if "book_outline_context" in old_values:
+                        run_input["book_outline_context"] = old_values["book_outline_context"]
+                    if "current_volume_phases" in old_values:
+                        run_input["current_volume_phases"] = old_values["current_volume_phases"]
+                    if "current_phase_chapters" in old_values:
+                        run_input["current_phase_chapters"] = old_values["current_phase_chapters"]
 
-                    # 🌟 通道一：实时 Token 流穿透
-                    if mode == "messages":
-                        msg_chunk, metadata = payload_data
-                        # 只穿透主笔节点（Chapter_Writer）的 Token，不暴露 Planner 的思考过程
-                        if metadata.get("langgraph_node") == "Chapter_Writer" and msg_chunk.content:
-                            payload = {"type": "chunk", "content": msg_chunk.content}
-                            yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+                    # 核心防遗忘：继承世界观和文风（前提是本次请求没有传新的覆盖它）
+                    if "world_bible_context" in old_values and not req.predefined_world_bible:
+                        run_input["world_bible_context"] = old_values["world_bible_context"]
+                    if "target_writing_style" in old_values and not req.target_writing_style:
+                        run_input["target_writing_style"] = old_values["target_writing_style"]
+                    # ==============================================================
 
-                    # 🌟 通道二：完整的节点状态更新
-                    elif mode == "updates":
-                        node_name = list(payload_data.keys())[0]
-                        state_updates = payload_data[node_name]
-                        safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
-                        payload = {"node": node_name, "updates": safe_updates}
+                    # 如果用户在前端强制传了新的世界观或文风，则覆盖进去
+                if req.predefined_world_bible and req.predefined_world_bible.strip():
+                    run_input["world_bible_context"] = req.predefined_world_bible
+                if req.target_writing_style:
+                    run_input["target_writing_style"] = req.target_writing_style
+            else:
+                # 🌟 场景 B：图处于被挂起的状态
+                run_input = None
+
+            # 启动数据流转
+            async for chunk in storyweaver_app.astream(run_input,
+                                                       config=config,
+                                                       stream_mode=["updates", "messages"]):
+                mode = chunk[0]
+                payload_data = chunk[1]
+
+                if mode == "messages":
+                    msg_chunk, metadata = payload_data
+                    if metadata.get("langgraph_node") == "Chapter_Writer" and msg_chunk.content:
+                        payload = {"type": "chunk", "content": msg_chunk.content}
                         yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
-                # 探测断点位置并给前端发送挂起信号
-                new_state = await storyweaver_app.aget_state(config)
-                if new_state.next:
-                    if "Chapter_Writer" in new_state.next:
-                        yield "data: {\"status\": \"PAUSED_FOR_BEAT_SHEET_REVIEW\"}\n\n"
-                    elif "Human_Review" in new_state.next:
-                        yield "data: {\"status\": \"PAUSED_FOR_HUMAN_REVIEW\"}\n\n"
+                elif mode == "updates":
+                    node_name = list(payload_data.keys())[0]
+                    state_updates = payload_data[node_name]
+                    safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
+                    payload = {"node": node_name, "updates": safe_updates}
+                    yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+            # 探测断点位置并给前端发送挂起信号
+            new_state = await storyweaver_app.aget_state(config)
+            if new_state.next:
+                if "Chapter_Writer" in new_state.next:
+                    yield "data: {\"status\": \"PAUSED_FOR_BEAT_SHEET_REVIEW\"}\n\n"
+                elif "Human_Review" in new_state.next:
+                    yield "data: {\"status\": \"PAUSED_FOR_HUMAN_REVIEW\"}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-
 # === 核心接口 2：接收人类总编反馈并唤醒 (双断点分流修复版) ===
 @router.post("/feedback")
-async def receive_human_feedback(req: FeedbackRequest):
-    # 🌟 核心修复 3：唤醒时，也必须对齐由 章节号 拼装出来的图线程 ID
+async def receive_human_feedback(req: FeedbackRequest, request: Request):  # 🌟 添加 request 依赖
     graph_thread_id = req.thread_id
     config = {"configurable": {"thread_id": graph_thread_id}}
 
+    # 🌟 核心修改：直接从全局获取记忆池
+    memory = request.app.state.checkpoint_saver
+
     try:
-        async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
-            workflow = build_workflow()
-            storyweaver_app = workflow.compile(
-                checkpointer=memory,
-                interrupt_before=["Chapter_Writer", "Human_Review"]
-            )
+        # 🌟 核心修改：去掉了 async with 块，下面的代码整体向左缩进一层
+        storyweaver_app = request.app.state.storyweaver_app
 
-            current_state = await storyweaver_app.aget_state(config)
-            if not current_state.next:
-                raise HTTPException(status_code=400, detail="当前没有被挂起的任务。")
+        current_state = await storyweaver_app.aget_state(config)
+        if not current_state.next:
+            raise HTTPException(status_code=400, detail="当前没有被挂起的任务。")
 
-            if req.target_node == "Chapter_Writer" and "Chapter_Writer" in current_state.next:
-                await storyweaver_app.aupdate_state(config, {"current_beat_sheet": req.edited_beat_sheet})
-                return {"status": "success", "message": "大纲已确认，准备流式生成正文。"}
+        if req.target_node == "Chapter_Writer" and "Chapter_Writer" in current_state.next:
+            await storyweaver_app.aupdate_state(config, {"current_beat_sheet": req.edited_beat_sheet})
+            return {"status": "success", "message": "大纲已确认，准备流式生成正文。"}
 
-            elif req.target_node == "Human_Review" and "Human_Review" in current_state.next:
-                human_decision = {
-                    "human_approval_status": req.approval_status,
-                    "human_feedback": req.human_feedback,
-                    "direct_edits": req.direct_edits
-                }
+        elif req.target_node == "Human_Review" and "Human_Review" in current_state.next:
+            human_decision = {
+                "human_approval_status": req.approval_status,
+                "human_feedback": req.human_feedback,
+                "direct_edits": req.direct_edits
+            }
 
-                await storyweaver_app.aupdate_state(config, human_decision)
+            await storyweaver_app.aupdate_state(config, human_decision)
 
-                if req.approval_status == "APPROVED":
-                    # 🌟 核心修复 4：加上 stream_mode="updates" 防止堵塞
-                    async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
-                        pass
-                else:
-                    async for event in storyweaver_app.astream(None, config=config, stream_mode="updates"):
-                        if "Human_Review" not in event:
-                            break
-                return {"status": "success", "message": "正文反馈已接收，已同步至状态机。",
-                        "approval": req.approval_status}
-
+            if req.approval_status == "APPROVED":
+                async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
+                    pass
             else:
-                raise HTTPException(status_code=400, detail="目标节点与当前挂起状态不匹配。")
+                async for event in storyweaver_app.astream(None, config=config, stream_mode="updates"):
+                    if "Human_Review" not in event:
+                        break
+            return {"status": "success", "message": "正文反馈已接收，已同步至状态机。",
+                    "approval": req.approval_status}
+
+        else:
+            raise HTTPException(status_code=400, detail="目标节点与当前挂起状态不匹配。")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"唤醒执行失败: {str(e)}")

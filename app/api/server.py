@@ -1,32 +1,49 @@
-# 生命周期管理 (Lifespan)，预热数据库与向量引擎
 # app/api/server.py
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from app.core.config import settings
+
 from app.api.routes import router
 from app.memory.kv_tracker import KVTracker
 from app.memory.rag_engine import RAGEngine
+from app.agents.graph import build_workflow
+
+DB_PATH = os.path.join(settings.DATA_DIR, "checkpoints.sqlite")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    生命周期管理：服务启动时预热数据库与向量引擎
+    生命周期管理：服务启动时预热数据库与向量引擎，并维持全局记忆库连接
     """
     print("🚀 [Server] 正在启动 StoryWeaver 共创引擎...")
     try:
         print("📦 [Server] 正在连接/初始化 KV 状态数据库...")
-        KVTracker()  # 触发 config.py 中的路径校验与初始化
-
+        KVTracker()
         print("📚 [Server] 正在连接/预热 RAG 向量存储空间...")
-        RAGEngine()  # 同上，预先拉起 FAISS 索引
+        RAGEngine()
     except Exception as e:
         print(f"⚠️ [Server] 引擎预热异常，但不阻断启动: {e}")
 
-    yield  # 服务在此处保持运行
+    # 🌟 核心修改：将 Checkpointer 提升到全局生命周期，挂载到 app.state
+    print("💾 [Server] 正在挂载全局 LangGraph 记忆库连接池...")
+    async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
+        app.state.checkpoint_saver = memory
+        print("⚙️ [Server] 正在全局编译 LangGraph 引擎实例...")
+        workflow = build_workflow()
+        app.state.storyweaver_app = workflow.compile(
+            checkpointer=memory,
+            interrupt_before=["Chapter_Writer", "Human_Review"]
+        )
+        print("✅ [Server] 引擎预热并编译完成！")
 
-    print("🛑 [Server] 正在关闭 StoryWeaver 共创引擎...")
+        yield  # 服务在此处保持运行，数据库连接在此期间一直保持开启！
+
+    print("🛑 [Server] 正在关闭 StoryWeaver 共创引擎，释放数据库连接...")
 
 
 # 初始化 FastAPI 实例
