@@ -139,9 +139,10 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
         scene_hook_prompt = ""
         if prev_ending:
             scene_hook_prompt = (
-                f"\n【⚠️ 极其重要：上一章的最后画面】\n"
-                f"上一章的结尾原文是：\n《...{prev_ending}》\n"
-                f"你的任务：本章的第一段，必须【严格无缝接续】上述画面的最后一秒！绝对不能出现时间跳跃或场景突兀！\n"
+                f"\n【🎬 物理级无缝接续锚点 (绝对红线)】\n"
+                f"上一章的最后500字原文是：\n《...{prev_ending}》\n"
+                f"你的任务：本章的第一段，必须【严丝合缝】地接续上述画面的最后一个动作或最后一句话！"
+                f"绝对禁止出现任何时间跳跃或场景突兀！不要写废话过渡，直接顺着上文往下写！\n"
             )
 
         instruction = (
