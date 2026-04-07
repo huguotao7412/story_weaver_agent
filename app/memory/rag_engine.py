@@ -6,8 +6,9 @@ from typing import List, Dict, Any
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from app.core.config import settings
-from app.core.llm_factory import get_embeddings
+from app.core.llm_factory import get_embeddings,rerank_documents
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from rank_bm25 import BM25Okapi
 
 
 class RAGEngine:
@@ -126,55 +127,98 @@ class RAGEngine:
             self._save_store(self.volume_store, self.volume_dir)
             print("🧹 [RAG-Engine] 【分卷剧情库】已安全清空重建。")
 
+    def _hybrid_search(self, store, query: str, k: int) -> list[Document]:
+        """
+        🔍 终极版混合检索：FAISS + BM25 (双路粗排扩大召回) -> Rerank (交叉编码器精排)
+        """
+        if store is None or k <= 0:
+            return []
+
+        try:
+            all_docs = list(store.docstore._dict.values())
+            valid_docs = [d for d in all_docs if d.metadata.get("type") != "placeholder"]
+            if not valid_docs:
+                return []
+
+            # 🌟 1. 扩大召回基数 (Recall)：我们要提供更多的“候选人”给 Rerank
+            # 保证至少召回 10 个候选段落，或者目标 k 值的 3 倍
+            recall_k = max(k * 3, 10)
+            recall_k = min(recall_k, len(valid_docs))  # 不能超过总文档数
+
+            # == 通道一：FAISS 向量召回 ==
+            faiss_docs = store.similarity_search(query, k=recall_k)
+            faiss_docs = [d for d in faiss_docs if d.metadata.get("type") != "placeholder"]
+
+            # == 通道二：BM25 关键字召回 ==
+            tokenized_corpus = [list(doc.page_content) for doc in valid_docs]
+            bm25 = BM25Okapi(tokenized_corpus)
+            tokenized_query = list(query)
+            bm25_docs = bm25.get_top_n(tokenized_query, valid_docs, n=recall_k)
+
+            # 🌟 2. 候选池去重合并 (Union)
+            # 使用 content 作为 hash key 去重，防止相同的段落被重复送去计算
+            unique_candidate_docs = {}
+            for d in faiss_docs + bm25_docs:
+                unique_candidate_docs[d.page_content] = d
+
+            candidate_docs = list(unique_candidate_docs.values())
+
+            # 如果去重后不够目标数量，直接返回
+            if len(candidate_docs) <= k:
+                return candidate_docs[:k]
+
+            # 🌟 3. Rerank 终极精排 (Precision)
+            print(f"   [RAG-Engine] 正在对 {len(candidate_docs)} 个候选段落进行 Rerank 精排...")
+            doc_texts = [d.page_content for d in candidate_docs]
+
+            # 调用 llm_factory 的精排 API
+            sorted_indices = rerank_documents(query, doc_texts, top_n=k)
+
+            # 根据返回的高分索引，组装最终文档
+            final_docs = [candidate_docs[i] for i in sorted_indices]
+            return final_docs
+
+        except Exception as e:
+            print(f"⚠️ [RAG-Engine] 检索/重排构建失败，平滑降级: {e}")
+            raw_results = store.similarity_search(query, k=k)
+            return [d for d in raw_results if d.metadata.get("type") != "placeholder"]
+
     # ==========================================
     # 🔭 立体联合检索机制
     # ==========================================
     def retrieve_context(self, query: str, k_global=2, k_volume=2, k_phase=2) -> str:
         """
         供下游 Planner 和 Editor 调用的层级化检索：
-        从全局、分卷、单期三个维度分别捞取知识，将返回结果严格分块，防止大模型认知混淆。
+        使用手动 RRF 混合检索，彻底解决功法、人名“幻视”问题。
         """
         context_str = "【🌟 层级化 RAG 历史与设定参考】\n"
 
-        # 1. 检索全局库 (Global) - 优先级最高，用于校验世界观与大伏笔
+        # 1. 混合检索全局库 (Global)
         context_str += "--- 🌍 全局法则与大事件 (Global Lore) ---\n"
-        if self.global_store:
-            global_results = self.global_store.similarity_search(query, k=k_global)
-            # 过滤掉可能的占位符
-            valid_global = [d for d in global_results if d.metadata.get("type") != "placeholder"]
-            if valid_global:
-                for i, doc in enumerate(valid_global):
-                    context_str += f"{i + 1}. {doc.page_content}\n"
-            else:
-                context_str += "（暂无全局设定）\n"
+        global_results = self._hybrid_search(self.global_store, query, k_global)
+        if global_results:
+            for i, doc in enumerate(global_results):
+                context_str += f"{i + 1}. {doc.page_content}\n"
         else:
             context_str += "（暂无全局设定）\n"
 
-        # 2. 检索分卷库 (Volume) - 用于串联本卷的起承转合
+        # 2. 混合检索分卷库 (Volume)
         context_str += "\n--- 📜 本卷宏观剧情 (Volume Plot) ---\n"
-        if self.volume_store:
-            volume_results = self.volume_store.similarity_search(query, k=k_volume)
-            valid_volume = [d for d in volume_results if d.metadata.get("type") != "placeholder"]
-            if valid_volume:
-                for i, doc in enumerate(valid_volume):
-                    chapter = doc.metadata.get("chapter", "?")
-                    context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
-            else:
-                context_str += "（暂无本卷历史）\n"
+        volume_results = self._hybrid_search(self.volume_store, query, k_volume)
+        if volume_results:
+            for i, doc in enumerate(volume_results):
+                chapter = doc.metadata.get("chapter", "?")
+                context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
         else:
             context_str += "（暂无本卷历史）\n"
 
-        # 3. 检索单期库 (Phase) - 用于精准接续上一章的具体场景和对话
+        # 3. 混合检索单期库 (Phase)
         context_str += "\n--- 🔍 本期微观细节 (Phase Detail) ---\n"
-        if self.phase_store:
-            phase_results = self.phase_store.similarity_search(query, k=k_phase)
-            valid_phase = [d for d in phase_results if d.metadata.get("type") != "placeholder"]
-            if valid_phase:
-                for i, doc in enumerate(valid_phase):
-                    chapter = doc.metadata.get("chapter", "?")
-                    context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
-            else:
-                context_str += "（暂无本期细节）\n"
+        phase_results = self._hybrid_search(self.phase_store, query, k_phase)
+        if phase_results:
+            for i, doc in enumerate(phase_results):
+                chapter = doc.metadata.get("chapter", "?")
+                context_str += f"{i + 1}. [源自第 {chapter} 章] {doc.page_content}\n"
         else:
             context_str += "（暂无本期细节）\n"
 

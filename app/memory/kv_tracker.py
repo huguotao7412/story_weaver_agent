@@ -133,6 +133,15 @@ class KVTracker:
 
                 snapshot += f"- {char['name']} {core_tag}: {status} | 境界: {level} | 位置: {location}\n"
 
+            inventory_items = self.inventory_table.all()
+            if inventory_items:
+                snapshot += "\n【🎒 核心角色物品与功法清单 (极其重要，切勿让角色重复获取)】：\n"
+                for item in inventory_items:
+                    # 告知大模型该物品的归属和获取时间
+                    snapshot += f"- {item['owner']} 拥有/已学会: {item['item_name']} (登记于第{item.get('acquired_in_chapter', '?')}章)\n"
+            else:
+                snapshot += "\n【🎒 核心角色物品】：当前背包空空如也\n"
+
             return snapshot
 
     # ==========================================

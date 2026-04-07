@@ -1,7 +1,9 @@
 # app/core/llm_factory.py
 import os
+import requests
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from dotenv import load_dotenv
+from typing import List
 
 # 确保在实例化前加载 .env 文件中的环境变量
 load_dotenv()
@@ -54,3 +56,47 @@ def get_embeddings() -> OpenAIEmbeddings:
         base_url=base_url,
         model=model_name,
     )
+
+
+def rerank_documents(query: str, documents: List[str], top_n: int = 3) -> List[int]:
+    """
+    🥇 硅基流动 Rerank 交叉编码器重排序
+    输入查询和文档列表，返回按相关性从高到低排序后的文档【索引列表】
+    """
+    if not documents:
+        return []
+
+    api_key = os.getenv("EMBEDDING_API_KEY")
+    # 硅基流动的 Rerank 标准接口
+    rerank_url = "https://api.siliconflow.cn/v1/rerank"
+
+    if not api_key:
+        print("⚠️ [Rerank] 缺少 EMBEDDING_API_KEY，降级为原顺序返回")
+        return list(range(min(top_n, len(documents))))
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "BAAI/bge-reranker-v2-m3",  # 硅基流动提供的免费且强大的多语言重排模型
+        "query": query,
+        "documents": documents,
+        "top_n": top_n,
+        "return_documents": False  # 节省带宽，只返回索引和分数
+    }
+
+    try:
+        response = requests.post(rerank_url, json=payload, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # 解析返回结果，提取重排后的索引
+        # data["results"] 的格式如：[{"index": 2, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.1}, ...]
+        sorted_indices = [item["index"] for item in data.get("results", [])]
+        return sorted_indices
+    except Exception as e:
+        print(f"⚠️ [Rerank] API 调用失败: {e}，降级为原顺序返回")
+        # 容错：如果 API 崩了，直接返回前 top_n 个原索引
+        return list(range(min(top_n, len(documents))))

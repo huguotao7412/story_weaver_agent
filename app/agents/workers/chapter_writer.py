@@ -12,8 +12,6 @@ from langchain_core.runnables import RunnableConfig
 WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场的【网文金牌主笔】。
 你的码字速度极快，且深谙“网文爽点心理学”与“下沉市场阅读习惯”。
 
-{human_override_instruction}
-
 【核心写作军规 - 必须刻在骨子里】：
 1. 📱 手机阅读排版：绝对禁止大段文字！每段话尽量不要超过 3-4 行。多用短句。
 2. 🎬 镜头感与白描：禁止干巴巴的“总结式叙述”（Show, don't tell）。不要说“他很生气”，要写“他猛地攥紧拳头，指甲嵌进肉里，眼底爬满血丝”。
@@ -66,23 +64,6 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
 
     messages_history = state.get("messages", [])
 
-    # 🌟 修改点 2：在主笔端同样提取前端最新剧情指令
-    latest_user_instruction = ""
-    for msg in reversed(messages_history):
-        if isinstance(msg, HumanMessage) and getattr(msg, "name", "") != "Human_Editor":
-            latest_user_instruction = msg.content
-            break
-
-    # 组装高优先级覆写文本
-    human_override_instruction = ""
-    if latest_user_instruction and latest_user_instruction.strip() and latest_user_instruction.strip() not in ["请按网文套路推进", ""]:
-        human_override_instruction = (
-            f"🔥【人类上帝指令 (God Command Override)】🔥\n"
-            f"人类总编刚刚下达了本章的特定诉求：\n《{latest_user_instruction}》\n"
-            f"🚨 警告：下方【本章专属节奏与钩子指令】属于系统级约束，但【人类指令高于一切】！如果总编要求大开杀戒，就算系统要求温馨收尾，也必须见血！一切以总编的诉求为绝对准则！\n"
-            f"====================================================\n"
-        )
-
     idx = (current_chapter_num - 1) % 10
 
     if idx in [0, 1, 2]:
@@ -96,7 +77,6 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
 
     # 🌟 修改点 3：将 human_override_instruction 注入 Writer 的系统 Prompt
     sys_prompt = WRITER_SYSTEM_PROMPT.format(
-        human_override_instruction=human_override_instruction, # 🌟 注入上帝指令！
         world_bible=world_bible,
         history_context=history_context,
         style_guide=style_guide,

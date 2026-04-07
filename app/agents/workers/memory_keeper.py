@@ -30,8 +30,8 @@ class CharacterUpdate(BaseModel):
 
 class ItemUpdate(BaseModel):
     owner: str = Field(description="物品的当前所有者")
-    item_name: str = Field(description="物品/法宝名称")
-    action: str = Field(description="状态动作，必须是 ADD (获得/添加) 或 REMOVE (消耗/遗失)")
+    item_name: str = Field(description="物品、法宝、功法、或武技名称")  # 强调功法
+    action: str = Field(description="状态动作，必须是 ADD (获得/学会) 或 REMOVE (消耗/遗失/废除)")
     description: str = Field(description="关于获得或消耗的具体描述")
 
 
