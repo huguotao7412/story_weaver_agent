@@ -30,23 +30,23 @@ LAYER1_BOOK_PROMPT = """你是一个白金级网文【全书总架构师】。
 【极其重要】：JSON 的所有键名（Keys）必须完全使用系统定义的英文原始字段名（如 world_bible, volumes 等），绝对禁止翻译为中文或自行修改键名！绝对禁止输出任何 Markdown 代码块（如 ```json ），禁止包含任何前缀或后缀废话！
 """
 
-# 2. 第二层：
+# 2. 第二层：分卷五期大纲
 LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
-你的任务是提取《全书总纲》中【第 {current_volume_num} 卷】的核心目标，将其严格切分为【10期】（每期约10章，共100章）。
+你的任务是提取《全书总纲》中【第 {current_volume_num} 卷】的核心目标，将其严格切分为【5期】（每期约10章，本卷共50章）。
 
 【全局世界观与十卷总纲】：
 {book_outline}
 
-要求：必须采用“腰部小高潮+尾部大高潮”的五幕剧结构！
-- 第1-2期（潜龙在渊）：初入新地图，试探、稳扎稳打。
-- 第3-4期（风云渐起）：卷入小纷争，展露头角，获得第一波神装。
-- 第5-6期（腰部高潮）：第一个大高潮爆发！击杀明面Boss，发现深层阴谋。
-- 第7-8期（极限蓄力）：压抑、紧迫的疯狂寻找机缘与突破大境界。
-- 第9-10期（终局超脱）：斩杀终极Boss，势力洗牌，并在第10期进行超长结算与告别。
+要求：必须采用“腰部小高潮+尾部大高潮”的经典五幕剧结构！
+- 第1期（潜龙在渊）：初入新地图，试探、情报收集、稳扎稳打。
+- 第2期（风云渐起）：卷入纷争，展露头角，获得第一波神装或小机缘。
+- 第3期（腰部高潮）：第一个大高潮爆发！击杀明面Boss，发现深层阴谋。
+- 第4期（极限蓄力）：压抑、紧迫的疯狂寻找机缘与突破大境界。
+- 第5期（终局超脱）：斩杀终极Boss，势力洗牌，并在本期进行卷末结算与告别。
 
 🚨 【格式强约束】：
-必须且只能以纯 JSON 格式输出，包含 10 个 PhaseDetail,严格遵循系统提供的 Schema 结构。
-【极其重要】：JSON 的所有键名（Keys）必须完全使用系统定义的英文原始字段名（如 world_bible, volumes 等），绝对禁止翻译为中文或自行修改键名！绝对禁止输出任何 Markdown 代码块（如 ```json ），禁止包含任何前缀或后缀废话！
+必须且只能以纯 JSON 格式输出，包含 5 个 PhaseDetail，严格遵循系统提供的 Schema 结构。
+【极其重要】：JSON 的所有键名（Keys）必须完全使用系统定义的英文原始字段名，绝对禁止翻译为中文或自行修改键名！绝对禁止输出任何 Markdown 代码块，禁止包含任何废话！
 """
 
 # 3. 第三层：单期十章 (10章)
@@ -140,7 +140,7 @@ def get_focused_volume_phases(volume_phases_json: str, current_chapter_num: int)
         if not phases or len(phases) <= 3:
             return volume_phases_json
 
-        current_phase_idx = ((current_chapter_num - 1) % 100) // 10
+        current_phase_idx = ((current_chapter_num - 1) % 50) // 10
         last_phase_idx = len(phases) - 1
 
         focused_phases = []
@@ -272,13 +272,13 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
     current_chapter_num = state.get("current_chapter_num", 1)
     current_book_id = state.get("book_id", "default_book")
 
-    current_volume_num = (current_chapter_num - 1) // 100 + 1
-    is_new_volume = (current_chapter_num == 1) or ((current_chapter_num - 1) % 100 == 0)
+    current_volume_num = (current_chapter_num - 1) // 50 + 1
+    is_new_volume = (current_chapter_num == 1) or ((current_chapter_num - 1) % 50 == 0)
 
     if volume_phases and volume_phases.strip() != "" and not is_new_volume:
         return {"is_volume_initialized": True}
 
-    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在将本卷切分为【十期】...")
+    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在将本卷切分为【五期】...")
 
     llm = get_llm(model_type="main", temperature=0.3)
     book_outline = state.get("book_outline_context", "暂无总纲")
@@ -290,7 +290,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
                 book_outline=book_outline,
                 current_volume_num=current_volume_num
             )),
-            HumanMessage(content="请生成当前分卷的十期拆解大纲。")
+            HumanMessage(content="请生成当前分卷的五期拆解大纲。")
         ])
         phase_json = json.dumps(phase_result.model_dump(), ensure_ascii=False, indent=2)
         if current_chapter_num > 1 and is_new_volume:

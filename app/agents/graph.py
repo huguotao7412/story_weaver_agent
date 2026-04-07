@@ -28,7 +28,7 @@ def planner_router(state: TomatoNovelState) -> str:
         return "Book_Planner"
 
     # 🌟 修改点：将 30 改为 100，实现 100 章一卷的大地图跨度
-    if (current_chapter_num - 1) % 100 == 0:
+    if (current_chapter_num - 1) % 50 == 0:
         print(f"🔀 [Router] 智能路由分配：新卷开启 (第 {current_chapter_num} 章) -> Volume_Planner")
         return "Volume_Planner"
 

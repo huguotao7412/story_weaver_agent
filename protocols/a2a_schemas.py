@@ -32,9 +32,9 @@ class PhaseDetail(BaseModel):
     plot_mission: str = Field(description="本期的核心剧情任务和转折点")
 
 class VolumePhases(BaseModel):
-    """🗺️ 第二层：分卷十期协议"""
+    """🗺️ 第二层：分卷五期协议"""
     current_volume_name: str = Field(description="当前正在拆解的卷名")
-    phases: List[PhaseDetail] = Field(description="包含 10 期的详细任务拆解")
+    phases: List[PhaseDetail] = Field(description="包含 5 期的详细任务拆解")
 
 class ChapterSummary(BaseModel):
     """单章剧情核心摘要"""
