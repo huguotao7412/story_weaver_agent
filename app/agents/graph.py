@@ -10,6 +10,7 @@ from app.agents.workers.all_planner import (
     phase_planner_node,
     chapter_planner_node
 )
+from app.agents.workers.continuity_editor import continuity_editor_node
 from app.agents.workers.chapter_writer import chapter_writer_node
 from app.agents.workers.memory_keeper import memory_keeper_node
 from app.agents.supervisor import human_review_node
@@ -49,6 +50,14 @@ def human_review_router(state: TomatoNovelState) -> Literal["Memory_Keeper", "Ch
         print("🔀 [Router] 人类总编打回，附加强制指令流转至主笔重写。")
         return "Chapter_Writer"
 
+def editor_router(state: TomatoNovelState) -> Literal["Human_Review", "Chapter_Writer"]:
+    status = state.get("editor_comments", "PASS")
+    if status == "FAIL":
+        print("🔀 [Router] 内审未通过，流转回主笔重构细节。")
+        return "Chapter_Writer"
+    else:
+        print("🔀 [Router] 内审通过 (或强行放行)，流转至人类总编审查。")
+        return "Human_Review"
 
 def build_workflow() -> StateGraph:
     workflow = StateGraph(TomatoNovelState)
@@ -60,6 +69,7 @@ def build_workflow() -> StateGraph:
     workflow.add_node("Chapter_Writer", chapter_writer_node)
     workflow.add_node("Human_Review", human_review_node)
     workflow.add_node("Memory_Keeper", memory_keeper_node)
+    workflow.add_node("Continuity_Editor", continuity_editor_node)
 
     # 🌟 修改核心：将硬编码的 workflow.add_edge(START, "Book_Planner") 替换为条件路由
     workflow.add_conditional_edges(START, planner_router)
@@ -68,12 +78,9 @@ def build_workflow() -> StateGraph:
     workflow.add_edge("Book_Planner", "Volume_Planner")
     workflow.add_edge("Volume_Planner", "Phase_Planner")
     workflow.add_edge("Phase_Planner", "Chapter_Planner")
-
-    # 🌟 修改 1：大纲规划后进入主笔（中间会被系统的 interrupt_before 挂起）
     workflow.add_edge("Chapter_Planner", "Chapter_Writer")
-
-    # 🌟 修改 2：主笔写完后，直接进入人类审查（同样会被 interrupt_before 挂起）
-    workflow.add_edge("Chapter_Writer", "Human_Review")
+    workflow.add_edge("Chapter_Writer", "Continuity_Editor")
+    workflow.add_conditional_edges("Continuity_Editor", editor_router)
 
     workflow.add_conditional_edges("Human_Review", human_review_router)
     workflow.add_edge("Memory_Keeper", END)

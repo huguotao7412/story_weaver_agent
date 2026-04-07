@@ -53,6 +53,7 @@ class BeatSheetNode(BaseModel):
     plot_summary: str = Field(description="本段剧情的核心摘要")
     is_climax: bool = Field(default=False, description="当前节拍是否包含【打脸/爽点】")
     hook: str = Field(default="", description="如果位于结尾，这里填写【悬念钩子】的具体设计")
+    word_count_weight: str = Field(default="15%",description="该节拍在全文的字数占比权重（如：10%, 40%），指示主笔哪些部分需要详写注水，哪些部分一笔带过")
 
 class ChapterOutline(BaseModel):
     """🗺️ 第四层：单章节拍协议"""

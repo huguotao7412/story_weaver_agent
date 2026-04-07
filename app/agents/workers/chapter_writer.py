@@ -19,13 +19,12 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 2. 🎬 镜头感与白描：禁止干巴巴的“总结式叙述”（Show, don't tell）。不要说“他很生气”，要写“他猛地攥紧拳头，指甲嵌进肉里，眼底爬满血丝”。
 3. 🗣️ 对话驱动：剧情推进要多靠角色之间的对话、动作和神态拉扯来完成。
 4. 💥 情绪表现：打脸情节必须干脆利落；如果是日常和结算，则要重点描写围观群众的震惊和主角的深藏不露。
-5. 💥 每一章的结尾静止像写散文一样总结式收尾是大忌！可以有，但只能出现在【舒缓/日常期】的章节里！其他类型的章节结尾制造强烈的悬念钩子，要么直接卡在生死危机的高潮瞬间！绝对禁止在结尾引入新的危机或伏笔！每章结尾都要让读者欲罢不能，迫不及待想看下一章！
-6. 🪝 【本章专属节奏与钩子指令】：
+5. 🌊 【拒绝流水账警告（防骨架裸奔）】：你现在拿到的 6-8 个节拍是极度微观的骨架。绝对禁止像写说明书一样把节拍简单串起来！你必须使用大量的“冰山理论”——每个节拍都要用角色的对话拉扯、微表情、环境光影、以及围观者的内心戏来深度包装。如果不水出极高分辨率的画面感，内审编辑会把你打回重写！
+6. 💥 每一章的结尾静止像写散文一样总结式收尾是大忌！可以有，但只能出现在【舒缓/日常期】的章节里！其他类型的章节结尾制造强烈的悬念钩子，要么直接卡在生死危机的高潮瞬间！绝对禁止在结尾引入新的危机或伏笔！每章结尾都要让读者欲罢不能，迫不及待想看下一章！
+7. 🪝 【本章专属节奏与钩子指令】：
 {dynamic_hook_rule}
-6. 🛑 【进度物理墙（绝对红线）】：你必须严格止步于大纲给定的最后一个节拍（Beat）！
-   - 如果你发现写完最后一个节拍时，字数距离目标字数还差很远，请进行【横向扩写】（Horizontal Pacing）。
-   - 横向扩写指南：增加环境白描、围观路人的震惊反应、反派视角的咬牙切齿、或是主角内心的功法推演。
-   - 严禁为了凑字数而擅自推进时间线！绝对不许写出超越大纲最后一幕的动作或场景！
+8. 🛑 【进度物理墙与防溢出红线（绝对红线）】：你必须严格止步于大纲给定的最后一个节拍（Beat）！本章目标字数在 2000 字左右，宁可详细刻画单一场景（如人物心理、细微动作、环境烘托、围观者反应），也绝对禁止为了凑字数而擅自推进时间线！
+9. ⚖️ 【严格执行权重分配】：大纲中每个节拍都标注了字数占比权重（word_count_weight）。对于权重高的节拍（如 30%-40%），你必须当成“核心大轴戏”来写，多加对白、心理、神态拉扯；对于权重低的节拍，则干脆利落一笔带过！
 
 【🚨 终极输出红线（违背将遭受降级惩罚）】：
 你生成的必须是**纯粹的小说正文文本**！
@@ -106,6 +105,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
 
     human_status = state.get("human_approval_status")
     human_feedback = state.get("human_feedback", "")
+    editor_comments = state.get("editor_comments", "")
 
     if human_status == "REJECTED":
         print("✍️ [Chapter-Writer] 收到人类总编【打回重写】指令，正在后台含泪重构...")
@@ -115,6 +115,22 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
             f"你的原稿如下：\n{current_draft}\n\n"
             f"任务：请你深呼吸，仔细揣摩总编的意图！抛弃原稿中不合理的部分，"
             f"结合本章大纲（参考下文），彻底重写本章正文。务必让总编满意！"
+        )
+    elif editor_comments == "FAIL":
+        # 从消息总线中捞取刚刚 Editor 发出的批评意见
+        last_editor_msg = ""
+        for msg in reversed(messages_history):
+            if getattr(msg, "name", "") == "Continuity_Editor":
+                last_editor_msg = msg.content
+                break
+
+        print(f"✍️ [Chapter-Writer] 收到内审打回指令，正在疯狂填补细节注水...")
+        instruction = (
+            f"【⚠️ 内部质检打回重写】\n"
+            f"主笔，你的上一版草稿未能通过系统内审！要么字数太少，要么抢跑越界了！\n"
+            f"以下是主编(内审组)的打回意见：\n{last_editor_msg}\n\n"
+            f"你的上一版原稿字数为 {len(current_draft)} 字，原稿如下：\n{current_draft}\n\n"
+            f"任务：仔细阅读内审意见！绝对禁止往后推时间线抢跑！如果字数不够，请在节拍器要求的高权重画面疯狂加环境白描、围观者惊叹、人物心理拉扯注水！彻底重写本章正文。"
         )
     else:
         print(
@@ -133,7 +149,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
             f"这是本章的详细节拍器（大纲）。⚠️注意：请将大纲情节融合成连贯自然的连续小说正文，绝对禁止在正文里照抄大纲的标号或保留大纲的痕迹！\n{current_beat_sheet}\n"
             f"{scene_hook_prompt}\n"
             f"任务：请严格按照大纲给定的情节走向和爽点要求，挥洒你的创意，生成本章的初版草稿。"
-            f"字数要求在 {settings.MAX_WORDS_PER_CHAPTER} 字左右，注意行文节奏，不要像列大纲一样流水账，要写出画面感！"
+            f"字数要求在 {settings.MAX_WORDS_PER_CHAPTER} 字左右，宁可详细刻画单一场景，也绝对禁止为了凑字数推进时间线！严格遵循大纲每个节拍的 word_count_weight 权重，不要像列大纲一样流水账，要写出极高分辨率的画面感！"
         )
 
     llm = get_llm(model_type="main", temperature=0.7)

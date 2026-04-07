@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     REFERENCES_DIR: Path = Field(default=BASE_DIR / "data" / "references", description="参考神作文本目录")
 
     # === 番茄爽文公式全局参数 ===
-    MAX_WORDS_PER_CHAPTER: int = Field(default=3000, description="单章字数上限")
+    MAX_WORDS_PER_CHAPTER: int = Field(default=2000, description="单章字数上限")
     CLIFFHANGER_REQUIREMENT: bool = Field(default=True, description="强制章末悬念钩子")
 
     class Config:

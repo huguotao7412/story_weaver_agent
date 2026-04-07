@@ -42,6 +42,7 @@ if "app_stage" not in st.session_state: st.session_state.app_stage = "IDLE"
 with st.sidebar:
     st.header("📂 书库管理中心")
 
+
     @st.cache_data(ttl=2)
     def fetch_books():
         try:
@@ -50,6 +51,7 @@ with st.sidebar:
         except:
             return []
         return []
+
 
     existing_books = fetch_books()
     if st.session_state.thread_id not in existing_books: existing_books.append(st.session_state.thread_id)
@@ -81,6 +83,7 @@ with st.sidebar:
                     st.session_state.target_writing_style = None
                     st.rerun()
 
+
         if st.button("➕ 新建小说"): create_new_book_dialog()
 
     with col_btn_del:
@@ -103,6 +106,7 @@ with st.sidebar:
     st.divider()
     st.header("🎭 全局文风克隆引擎")
 
+
     @st.cache_data(ttl=2)
     def fetch_references():
         try:
@@ -111,6 +115,7 @@ with st.sidebar:
         except:
             return []
         return []
+
 
     existing_refs = fetch_references()
     ref_tab1, ref_tab2 = st.tabs(["📁 历史神作库", "⬆️ 上传新文本"])
@@ -161,7 +166,8 @@ with st.sidebar:
         with st.expander("🟢 当前文风特征", expanded=False):
             st.json(st.session_state.target_writing_style.get("novel_specific", {}).get("rules", {}))
     else:
-        st.info("🔄 文风待激活：若您之前已为本书提取过文风，引擎将在下次【启动推演】时自动从记忆库拉取并在此点亮；若是新书，请在上方提取。")
+        st.info(
+            "🔄 文风待激活：若您之前已为本书提取过文风，引擎将在下次【启动推演】时自动从记忆库拉取并在此点亮；若是新书，请在上方提取。")
 
 
 # ==========================================
@@ -196,13 +202,36 @@ def start_generation_stream(user_input, chapter_num):
                                 st.error(f"后端执行报错: {data['error']}")
                                 st.stop()  # 🌟 核心修改点：将 break 改为 st.stop()，强行终止当前页面的后续渲染（包括底部的状态判定和可能触发的 rerun），让报错信息停留在页面上！
 
-                            # 处理节点进度展示
+                            # 处理节点进度展示与焦虑安抚播报
                             if "node" in data:
-                                status_placeholder.info(f"🧠 引擎节点执行完毕: **{data['node']}**，流转中...")
+                                node_name = data["node"]
+                                updates = data.get("updates", {})
+
+                                # 🌟 针对 Continuity-Editor 的焦虑安抚与实时战况播报
+                                if node_name == "Continuity_Editor":
+                                    editor_status = updates.get("editor_comments", "")
+                                    if editor_status == "FAIL":
+                                        status_placeholder.error(
+                                            "🚨 内部质检：发现主笔进度抢跑或字数不足，正在严厉训斥并命令主笔局部重修！")
+                                        # 因为打回后马上会重新进入 Writer 码字，清空之前的旧草稿显示
+                                        st.session_state.draft_content = ""
+                                    elif editor_status == "PASS":
+                                        status_placeholder.success("✅ 内部质检：主笔核对无误，无越界与流水账问题！")
+                                    elif editor_status == "PASS_WITH_WARNING":
+                                        status_placeholder.warning("⚠️ 内部质检：重试次数达标强制放行，请总编亲自把关！")
+                                    else:
+                                        status_placeholder.warning("🕵️ 内部质检：逻辑审查员正在逐句比对大纲与字数...")
+
+                                elif node_name == "Chapter_Writer":
+                                    status_placeholder.info("✍️ 主笔已交稿，准备移交内审组审查...")
+                                elif node_name == "Chapter_Planner":
+                                    status_placeholder.info("📍 节拍拆解员正在规划本章极微观的分镜头脚本...")
+                                else:
+                                    status_placeholder.info(f"🧠 引擎节点流转中: **{node_name}**...")
 
                             # 捕获 Token 碎片并实时渲染
                             if data.get("type") == "chunk":
-                                status_placeholder.info("✍️ 金牌主笔正在疯狂码字中...")
+                                status_placeholder.info("✍️ 金牌主笔正在疯狂码字（或修改局部细节）中...")
                                 if st.session_state.draft_content == "暂无草稿...":
                                     st.session_state.draft_content = ""
 
@@ -258,7 +287,7 @@ def send_beat_feedback(edited_beat, reject=False):
         "target_node": "Chapter_Writer"
     }
     requests.post(f"{API_BASE_URL}/feedback", json=payload)
-    st.session_state.draft_content = "" # 确认大纲发车前清空草稿
+    st.session_state.draft_content = ""  # 确认大纲发车前清空草稿
     start_generation_stream("", st.session_state.current_chapter_num)
 
 
@@ -277,7 +306,7 @@ def send_draft_feedback(approval_status, feedback_text, direct_edits):
         if approval_status == "REJECTED":
             if "user_edited_draft" in st.session_state:
                 del st.session_state["user_edited_draft"]
-            st.session_state.draft_content = "" # 打回重写时清空旧草稿
+            st.session_state.draft_content = ""  # 打回重写时清空旧草稿
             start_generation_stream("", st.session_state.current_chapter_num)
         else:
             if "user_edited_draft" in st.session_state:
@@ -331,7 +360,8 @@ if st.session_state.app_stage == "IDLE":
                 placeholder="例如：紧接上一章结尾，主角果断拔剑，狠狠打脸反派...",
                 key="plot_prompt_input"
             )
-            st.caption("💡 提示：引擎已通过底层状态机自动继承**【前文画面】**与**【全局大纲】**，您无需重复交代背景，像总编一样直接下达后续的核心矛盾即可。")
+            st.caption(
+                "💡 提示：引擎已通过底层状态机自动继承**【前文画面】**与**【全局大纲】**，您无需重复交代背景，像总编一样直接下达后续的核心矛盾即可。")
 
         if st.button("🚀 启动推演：生成本章大纲", use_container_width=True, type="primary"):
             if not st.session_state.plot_prompt_input:
