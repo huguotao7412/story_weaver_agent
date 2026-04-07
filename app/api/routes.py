@@ -267,3 +267,17 @@ async def delete_book(book_id: str):
         print(f"⚠️ SQLite 清理遇到阻碍: {e}")
 
     return {"status": "success", "message": f"书籍 {book_id} 已被彻底超度。"}
+
+@router.delete("/books/{book_id}/chapters/{chapter_num}")
+async def reset_chapter_state(book_id: str, chapter_num: int):
+    """清除当前章节的 LangGraph Checkpoint，实现重置"""
+    graph_thread_id = f"{book_id}_chap_{chapter_num}"
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (graph_thread_id,))
+            await db.execute("DELETE FROM checkpoint_writes WHERE thread_id = ?", (graph_thread_id,))
+            await db.execute("DELETE FROM checkpoint_blobs WHERE thread_id = ?", (graph_thread_id,))
+            await db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -271,6 +271,8 @@ def start_generation_stream(user_input, chapter_num):
 
 def send_beat_feedback(edited_beat, reject=False):
     if reject:
+        requests.delete(
+            f"{API_BASE_URL}/books/{st.session_state.thread_id}/chapters/{st.session_state.current_chapter_num}")
         if "user_edited_beat" in st.session_state:
             del st.session_state["user_edited_beat"]
         st.session_state.app_stage = "IDLE"

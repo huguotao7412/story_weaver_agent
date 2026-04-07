@@ -320,7 +320,7 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
     if phase_chapters and phase_chapters.strip() != "" and not is_new_phase:
         return {"is_phase_initialized": True}
 
-    current_phase_index = ((current_chapter_num - 1) % 100) // 10
+    current_phase_index = ((current_chapter_num - 1) % 50) // 10
     current_phase_name = f"第 {current_phase_index + 1} 期"
 
     print(f"📑 [Phase-Planner] 触发跨期推演！当前进入本卷的【{current_phase_name}】，推演十章剧情...")
