@@ -56,6 +56,9 @@ for key, default_value in DEFAULT_STATES.items():
 if "current_chapter_num" not in st.session_state:
     st.session_state.current_chapter_num = fetch_book_progress(st.session_state.thread_id)
 
+# 🌟 全局运行状态判定：防止用户在流转时误触按钮打断流式连接
+is_running = st.session_state.app_stage == "RUNNING"
+
 # ==========================================
 # 🧭 侧边栏：配置与资产管理
 # ==========================================
@@ -70,8 +73,10 @@ with st.sidebar:
     if st.session_state.thread_id not in existing_books:
         existing_books.append(st.session_state.thread_id)
 
+    # 🌟 运行中禁用项目切换
     selected_book = st.selectbox("📚 当前创作项目", existing_books,
-                                 index=existing_books.index(st.session_state.thread_id))
+                                 index=existing_books.index(st.session_state.thread_id),
+                                 disabled=is_running)
 
     if selected_book != st.session_state.thread_id:
         st.session_state.update({
@@ -101,11 +106,12 @@ with st.sidebar:
                     })
                     st.rerun()
 
-
-        if st.button("➕ 新建小说", use_container_width=True): create_new_book_dialog()
+        # 🌟 运行中禁用新建
+        if st.button("➕ 新建小说", use_container_width=True, disabled=is_running): create_new_book_dialog()
 
     with col2:
-        if st.button("🗑️ 销毁本项目", use_container_width=True):
+        # 🌟 运行中禁用销毁
+        if st.button("🗑️ 销毁本项目", use_container_width=True, disabled=is_running):
             try:
                 requests.delete(f"{API_BASE_URL}/books/{st.session_state.thread_id}")
                 st.toast("✅ 书籍已成功销毁！")
@@ -122,7 +128,8 @@ with st.sidebar:
         "录入背景设定、境界划分或金手指...",
         value=st.session_state.predefined_world_bible,
         height=120,
-        help="引擎在规划大纲和生成正文时会严格遵守此处的权威设定。"
+        help="引擎在规划大纲和生成正文时会严格遵守此处的权威设定。",
+        disabled=is_running # 🌟 运行中禁用世界观修改
     )
 
     st.divider()
@@ -135,11 +142,11 @@ with st.sidebar:
     selected_ref, uploaded_ref_content = None, None
 
     with ref_tab1:
-        selected_ref = st.selectbox("复用历史文风", ["-- 请选择 --"] + existing_refs) if existing_refs else "-- 请选择 --"
+        selected_ref = st.selectbox("复用历史文风", ["-- 请选择 --"] + existing_refs, disabled=is_running) if existing_refs else "-- 请选择 --"
         if not existing_refs: st.caption("暂无历史神作，请右侧上传。")
 
     with ref_tab2:
-        uploaded_file = st.file_uploader("上传参考文本 (.txt)", type=["txt"])
+        uploaded_file = st.file_uploader("上传参考文本 (.txt)", type=["txt"], disabled=is_running)
         if uploaded_file:
             uploaded_ref_content = uploaded_file.read().decode("utf-8")
             try:
@@ -149,7 +156,8 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"归档失败: {e}")
 
-    if st.button("🧬 提取并激活文风", use_container_width=True, type="primary"):
+    # 🌟 运行中禁用文风提取
+    if st.button("🧬 提取并激活文风", use_container_width=True, type="primary", disabled=is_running):
         payload = {"reference_text": uploaded_ref_content} if uploaded_file else {"reference_filename": selected_ref}
         if payload.get("reference_text") or (selected_ref and selected_ref != "-- 请选择 --"):
             with st.spinner("🧠 深度解构文风中..."):
@@ -318,15 +326,17 @@ if st.session_state.app_stage == "IDLE":
         st.subheader("💡 连载发车中心")
         col_inp1, col_inp2 = st.columns([1.5, 8.5])
         with col_inp1:
-            chapter_input = st.number_input("目标章节", min_value=1, value=st.session_state.current_chapter_num, step=1)
+            chapter_input = st.number_input("目标章节", min_value=1, value=st.session_state.current_chapter_num, step=1, disabled=is_running)
         with col_inp2:
             plot_prompt = st.text_input(
                 f"✍️ 第 {st.session_state.current_chapter_num} 章核心指令：",
                 placeholder="例如：紧接上一章结尾，主角果断拔剑，狠狠打脸反派...",
-                key="plot_prompt_input"
+                key="plot_prompt_input",
+                disabled=is_running
             )
 
-        if st.button("🚀 启动推演引擎", use_container_width=True, type="primary"):
+        # 🌟 运行中禁用发车按钮
+        if st.button("🚀 启动推演引擎", use_container_width=True, type="primary", disabled=is_running):
             if not st.session_state.plot_prompt_input:
                 st.warning("总编，请下达具体的剧情指令！")
             else:

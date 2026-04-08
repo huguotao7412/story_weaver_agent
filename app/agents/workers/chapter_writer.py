@@ -1,6 +1,7 @@
 # app/agents/workers/chapter_writer.py
 import os
 import json
+import uuid
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.core.config import settings
@@ -62,7 +63,9 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     current_book_id = state.get("book_id", "default_book")
 
     # 🌟 获取上文摘要
-    recent_chapters_summary = state.get("recent_chapters_summary", "（暂无前情提要）")
+    summary_list = state.get("recent_chapters_summary", [])
+    recent_chapters_summary = "\n\n".join([f"【N-{len(summary_list) - i} 前情脉络】:\n{text}" for i, text in
+                                           enumerate(summary_list)]) if summary_list else "（暂无前情提要）"
 
     # === 2. 动态确定文风与提取黄金范文 ===
     target_style_obj = state.get("target_writing_style", {})
@@ -167,12 +170,23 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
             part1_outline = json.dumps({"beats": part1_beats}, ensure_ascii=False, indent=2)
             part2_outline = json.dumps({"beats": part2_beats}, ensure_ascii=False, indent=2)
 
+            # 动态计算上下半篇权重
+            def calc_target_words(beats_list, total_words=settings.MAX_WORDS_PER_CHAPTER):
+                try:
+                    weight_sum = sum([float(str(b.get("word_count_weight", "0")).replace("%", "")) for b in beats_list])
+                    return max(int((weight_sum / 100) * total_words), 500)  # 兜底最少500字
+                except:
+                    return 1500
+
+            target_words_p1 = calc_target_words(part1_beats)
+            target_words_p2 = calc_target_words(part2_beats)
+
             # --- 第 1 次调用：生成上半篇 ---
-            print("   [Chunk 1] 正在生成上半篇...")
+            print(f"   [Chunk 1] 正在生成上半篇 (目标字数: ~{target_words_p1}字)...")
             instr_part1 = (
                 f"【上半篇首次生成指令】\n"
                 f"这是本章的前半部分详细节拍器（大纲）：\n{part1_outline}\n"
-                f"任务：请严格按照这部分大纲，生成上半篇的正文。目标字数 1500 字左右。\n"
+                f"任务：请严格按照这部分大纲，生成上半篇的正文。目标字数 {target_words_p1} 字左右。\n"
                 f"🚨 绝对红线：严禁越界写出大纲未提及的后续剧情！多运用冰山理论写细节！"
             )
             messages_p1 = [SystemMessage(content=sys_prompt)] + recent_history + [HumanMessage(content=instr_part1)]
@@ -183,7 +197,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
                 # ❌ 已删除这里的 yield chunk，依赖 LangChain 回调自动推流
 
             # --- 第 2 次调用：生成下半篇 ---
-            print("   [Chunk 2] 正在生成下半篇...")
+            print(f"   [Chunk 2] 正在生成下半篇 (目标字数: ~{target_words_p2}字)...")
             sys_prompt_part2 = WRITER_SYSTEM_PROMPT.format(
                 recent_chapters_summary=recent_chapters_summary,
                 scene_hook_prompt="（这是本章的下半篇，请直接紧接上方【上半篇前文参考】的最后一个动作继续写，绝不要另起炉灶！）",
@@ -198,7 +212,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
                 f"【下半篇首次生成指令】\n"
                 f"这是本章的后半部分详细节拍器（大纲）：\n{part2_outline}\n"
                 f"【重要：你的上半篇前文参考 (请顺着语气接着写)】：\n{part1_draft}\n"
-                f"任务：紧接上半篇的情绪和动作，完成下半篇的正文。目标字数 1500 字左右。\n"
+                f"任务：紧接上半篇的情绪和动作，完成下半篇的正文。目标字数 {target_words_p2} 字左右。\n"
                 f"🚨 绝对红线：严禁重复上半篇已经写过的剧情！严厉执行结尾钩子规则！"
             )
             messages_p2 = [SystemMessage(content=sys_prompt_part2)] + recent_history + [HumanMessage(content=instr_part2)]
@@ -225,7 +239,8 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     # === 8. 保存与返回 ===
     action_message = AIMessage(
         content=f"[Chapter-Writer] 第 {current_chapter_num} 章正文草稿已生成，字数：{len(new_draft)}。",
-        name="Chapter_Writer"
+        name="Chapter_Writer",
+        id=str(uuid.uuid4())
     )
 
     print(f"✅ [Chapter-Writer] 码字完毕，总字数：{len(new_draft)}")

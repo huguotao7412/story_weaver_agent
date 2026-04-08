@@ -5,6 +5,7 @@
 # app/agents/supervisor.py
 
 import os
+import uuid
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -44,7 +45,7 @@ def human_review_node(state: dict) -> Dict[str, Any]:
 
     # 1. 人类直接批准入库
     if status == "APPROVED":
-        msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor")
+        msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor",id=str(uuid.uuid4()))
         print(f"✅ [Supervisor] 总编已批准第 {chapter_num} 章定稿！流转至 Memory-Keeper。")
         return {
             "human_approval_status": "APPROVED",
@@ -63,7 +64,8 @@ def human_review_node(state: dict) -> Dict[str, Any]:
 
         override_msg = HumanMessage(
             content=f"【人类总编最高指令】：{feedback}",
-            name="Human_Editor"
+            name="Human_Editor",
+            id = str(uuid.uuid4())
         )
 
         # 借鉴 WriteHERE 的递归规划：不仅是“打回”，而是将人类逻辑注入下一次生成

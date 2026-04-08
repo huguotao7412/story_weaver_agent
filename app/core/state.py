@@ -28,7 +28,7 @@ class TomatoNovelState(TypedDict):
     current_phase_chapters: str # 存放第三层：当前期的10章连贯梗概
 
     # 检索出的历史剧情/伏笔
-    recent_chapters_summary: str  # 存放前情提要摘要
+    recent_chapters_summary: List[str]  # 存放前情提要摘要
     rag_history_context: str
     previous_chapter_ending: str
 

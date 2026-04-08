@@ -88,7 +88,7 @@ class AsyncKVTracker:
     # ==========================================
     # 📸 快照生成 (🌟 冷热数据分离)
     # ==========================================
-    async def get_world_bible_snapshot(self) -> str:
+    async def get_world_bible_snapshot(self, filter_entities: list[str] = None) -> str:
         current_map = await self.get_global_map()
         active_chars = []
         dead_chars = []
@@ -101,18 +101,33 @@ class AsyncKVTracker:
                     char = json.loads(row[0])
                     status = char.get("status", "存活")
 
+                    # 1. 死亡角色判定（不可复活，单独造册）
                     if any(keyword in status for keyword in ["死", "亡", "陨落", "灭", "已故"]):
                         dead_count += 1
-                        dead_chars.append(f"- {char['name']} (状态: {status})") # 🌟 将死者登记造册
+                        dead_chars.append(f"- {char['name']} (状态: {status})")  # 🌟 将死者登记造册
                         continue
 
+                    # 2. 🌟 按需召回过滤逻辑 (On-Demand KV RAG)
+                    # 如果传入了 filter_entities (大纲中提取的实体关键词)，则进行名单过滤
+                    if filter_entities is not None:
+                        is_core = char.get("is_core", False)
+                        # 双向包含匹配：角色名在关键词中，或者关键词在角色名中
+                        name_mentioned = any(name in char['name'] or char['name'] in name for name in filter_entities)
+
+                        # 如果既不是核心主角团，又没有被本期大纲提及，直接冻结隐藏
+                        if not is_core and not name_mentioned:
+                            frozen_count += 1
+                            continue
+
+                    # 3. 活跃与冷数据隔离（仅保留核心或同地图角色）
                     if char.get("is_core", False) or char.get("location", "未知") == current_map:
                         active_chars.append(char)
                     else:
                         frozen_count += 1
 
+            # --- 下方拼接快照字符串的逻辑保持原样 ---
             snapshot = f"【🗺️ 当前主地图】：{current_map}\n"
-            snapshot += f"【🌟 活跃人物状态快照 (已冻结 {frozen_count} 个跨地图冷数据，清理 {dead_count} 个已故角色)】：\n"
+            snapshot += f"【🌟 活跃人物状态快照 (已冻结 {frozen_count} 个未登场/跨地图冷数据，清理 {dead_count} 个已故角色)】：\n"
 
             if not active_chars:
                 snapshot += "- 暂无活跃角色记录\n"

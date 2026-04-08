@@ -6,8 +6,27 @@ from langchain_core.documents import Document
 from app.core.config import settings
 from app.core.llm_factory import get_embeddings, rerank_documents
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from collections import OrderedDict
 from rank_bm25 import BM25Okapi
 
+class ThreadSafeLRUCache:
+    def __init__(self, capacity: int):
+        self.cache = OrderedDict()
+        self.capacity = capacity
+
+    def get(self, key: str):
+        if key not in self.cache: return None
+        self.cache.move_to_end(key)
+        return self.cache[key]
+
+    def put(self, key: str, value):
+        self.cache[key] = value
+        self.cache.move_to_end(key)
+        if len(self.cache) > self.capacity:
+            self.cache.popitem(last=False)
+
+# 全局共享实例 (跨请求存活)
+GLOBAL_BM25_CACHE = ThreadSafeLRUCache(capacity=50)
 
 class RAGEngine:
     """
@@ -33,22 +52,16 @@ class RAGEngine:
             separators=["\n\n", "\n", "。", "！", "？", "，", " ", ""]
         )
 
-        # 🌟 初始化 BM25 内存缓存字典
-        self.bm25_caches = {
-            "global": None,
-            "volume": None,
-            "phase": None
-        }
-
+        self.book_id = book_id
         # 加载或初始化三层向量空间
         self.global_store = self._load_store(self.global_dir)
         self.volume_store = self._load_store(self.volume_dir)
         self.phase_store = self._load_store(self.phase_dir)
 
         # 🌟 初始化时预热构建一次缓存
-        self.bm25_caches["global"] = self._build_bm25_cache(self.global_store)
-        self.bm25_caches["volume"] = self._build_bm25_cache(self.volume_store)
-        self.bm25_caches["phase"] = self._build_bm25_cache(self.phase_store)
+        GLOBAL_BM25_CACHE.put(f"{self.book_id}_global", self._build_bm25_cache(self.global_store))
+        GLOBAL_BM25_CACHE.put(f"{self.book_id}_volume", self._build_bm25_cache(self.volume_store))
+        GLOBAL_BM25_CACHE.put(f"{self.book_id}_phase", self._build_bm25_cache(self.phase_store))
 
     # ==========================================
     # 🛠️ 内部存储与缓存构建辅助方法
@@ -85,7 +98,7 @@ class RAGEngine:
         self._save_store(store, path)
 
         # 写入后立即刷新当前库的 BM25 缓存。检索时直接调缓存，实现 O(1) 检索
-        self.bm25_caches[cache_key] = self._build_bm25_cache(store)
+        GLOBAL_BM25_CACHE.put(f"{self.book_id}_{cache_key}", self._build_bm25_cache(store))
         return store
 
     # ==========================================
@@ -174,7 +187,7 @@ class RAGEngine:
             faiss_docs = [d for d in faiss_docs if d.metadata.get("type") != "placeholder"]
 
             # == 通道二：BM25 缓存召回 (🚀 极大降低 CPU 开销) ==
-            bm25_data = self.bm25_caches.get(cache_key)
+            bm25_data = GLOBAL_BM25_CACHE.get(f"{self.book_id}_{cache_key}")
             if bm25_data and bm25_data['docs']:
                 bm25 = bm25_data['bm25']
                 bm25_valid_docs = bm25_data['docs']
