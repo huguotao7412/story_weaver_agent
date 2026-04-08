@@ -70,9 +70,9 @@ LAYER3_PHASE_PROMPT = """你是一个精细的网文【单期统筹编剧】。
 【极其重要】：JSON 的所有键名（Keys）必须完全使用系统定义的英文原始字段名（如 world_bible, volumes 等），绝对禁止翻译为中文或自行修改键名！绝对禁止输出任何 Markdown 代码块（如 ```json ），禁止包含任何前缀或后缀废话！
 """
 
-# 4. 第四层：单章节拍 (3-5节拍)
+# 4. 第四层：单章节拍
 LAYER4_CHAPTER_PROMPT = """你是一个极其严苛的番茄【执行主编 / 节拍拆解员】。
-基于《十章剧情梗概》中对第 {chapter_num} 章的规划，为本章拆解出详细的 6-8 个“单章节拍器（Beat Sheet）”。
+基于《十章剧情梗概》中对第 {chapter_num} 章的规划，为本章拆解出详细的 4-6 个“单章节拍器（Beat Sheet）”。
 
 {human_override_instruction}
 

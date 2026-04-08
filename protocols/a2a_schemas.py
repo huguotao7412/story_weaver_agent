@@ -9,6 +9,10 @@ class StyleGuide(BaseModel):
     vocabulary: str = Field(description="用词偏好，例如：通俗大白话、下沉市场网络梗")
     action_dialogue_ratio: str = Field(description="动静比（对话与动作描写的比例）")
     compiled_prompt: str = Field(description="提炼出的供主笔直接使用的系统级 Prompt")
+    example_snippets: List[str] = Field(
+        default_factory=list,
+        description="从原文中摘录的1-2段最具代表性的原汁原味片段（如极其爽快的打脸白描、对话拉扯），作为 Few-shot 样例"
+    )
 
 # ==========================================
 # 🌟 百万字长篇：四层大纲协议定义

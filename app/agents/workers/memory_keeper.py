@@ -92,7 +92,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             draft = f.read()
     chapter_num = state.get("current_chapter_num", 1)
     messages = state.get("messages", [])
-    current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
+    current_book_id = state.get("book_id", "default_book")
 
     if not draft:
         return {}
@@ -111,7 +111,6 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
     llm = get_llm(model_type="main", temperature=0.1)
     structured_llm = llm.with_structured_output(MemoryExtraction, method="function_calling")
-
 
     memory_updates = None
     max_retries = 3
@@ -157,12 +156,11 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             else:
                 print(f"   [🛡️ 幻觉防御] LLM 试图填一个不存在的伏笔 (ID: {resolved.thread_id})，已拦截。")
 
-        rag_engine = RAGEngine(book_id=current_book_id)  # 🌟 隔离实例
+        rag_engine = RAGEngine(book_id=current_book_id)
         if memory_updates.global_events:
             rag_engine.insert_global_events(memory_updates.global_events, chapter_num)
 
         try:
-            # 🌟 统一存放到本书的专属沙盒中
             archive_dir = os.path.join(settings.DATA_DIR, current_book_id, "chapter_archive")
             os.makedirs(archive_dir, exist_ok=True)
             file_name = f"chapter_{chapter_num:03d}.md"
@@ -179,10 +177,23 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
         prev_ending = draft[-500:] if len(draft) > 500 else draft
 
+        # 🌟 修改点：利用 Fast 模型轻量级提取本章 200 字摘要，供下一章防重影
+        print("📝 [Memory-Keeper] 正在生成本章 200 字核心摘要...")
+        summary_prompt = f"请将以下这章网文正文压缩为200字的核心剧情摘要。只保留最关键的动作、结果和结尾的悬念，去掉废话和景色描写：\n{draft}"
+        fast_llm = get_llm(model_type="fast", temperature=0.1) # 使用便宜且速度快的小模型
+        try:
+            summary_msg = await fast_llm.ainvoke([HumanMessage(content=summary_prompt)])
+            chapter_summary = summary_msg.content
+            print("✅ [Memory-Keeper] 摘要生成成功！")
+        except Exception as e:
+            print(f"⚠️ [Memory-Keeper] 摘要生成失败: {e}")
+            chapter_summary = "（摘要生成失败，请依赖大纲与碎片历史进行推演）"
+
         return {
             "human_approval_status": "PENDING",
             "human_feedback": "",
             "previous_chapter_ending": prev_ending,
+            "recent_chapter_summary": chapter_summary, # 🌟 写入状态字典，流转给下一章使用
             "messages": delete_messages,
             "current_beat_sheet": "",
             "draft_path": ""
