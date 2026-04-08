@@ -75,6 +75,9 @@ def human_review_node(state: dict) -> Dict[str, Any]:
             "messages": [override_msg]
         }
 
+    elif status == "PASS_WITH_WARNING":
+        print("⚠️ [Supervisor] 接收到内审组的强行放行信号，等待总编最终裁定。")
+
     # 3. 异常状态兜底（比如没有经过 UI 交互直接触发了）
     else:
         print("⚠️ [Supervisor] 未检测到明确的人类决策，默认挂起。")

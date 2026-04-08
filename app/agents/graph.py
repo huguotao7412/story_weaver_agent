@@ -15,9 +15,6 @@ from app.agents.workers.chapter_writer import chapter_writer_node
 from app.agents.workers.memory_keeper import memory_keeper_node
 from app.agents.supervisor import human_review_node
 
-
-# 注意：删除了 continuity_editor 的引入和 editor_router 函数
-
 def planner_router(state: TomatoNovelState) -> str:
     """🌟 智能前置大纲路由：决定每次发车时的图入口节点"""
     current_chapter_num = state.get("current_chapter_num", 1)

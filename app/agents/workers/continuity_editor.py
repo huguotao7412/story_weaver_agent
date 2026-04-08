@@ -53,7 +53,8 @@ async def continuity_editor_node(state: dict) -> Dict[str, Any]:
     llm = get_llm(model_type="main", temperature=0.1) # 质检节点温度调低，确保理性
     structured_llm = llm.with_structured_output(EditorInternalReview, method="function_calling")
 
-    prompt = EDITOR_SYSTEM_PROMPT.format(draft_len=len(draft))
+    prompt = EDITOR_SYSTEM_PROMPT.format(kv_state=current_kv_state,
+                                         draft_len=len(draft) )
     human_content = f"【本章规定节拍器 (绝对红线)】：\n{beat_sheet}\n\n【主笔生成的正文草稿】：\n{draft}\n\n请进行严格质检。"
 
     try:

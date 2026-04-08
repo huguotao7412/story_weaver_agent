@@ -479,7 +479,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
         chapter_num=current_chapter_num,
         human_override_instruction=human_override_instruction,  # 🌟 注入上帝指令！
         previous_chapter_ending=formatted_prev_ending,  # 注入物理锚点
-        recent_chapters_text=recent_chapters_summary,
+        recent_chapters_summary=recent_chapters_summary,
         focused_phase_chapters=focused_phase_chapters,
         power_system_rules=power_rules,
         world_bible=world_bible,

@@ -4,7 +4,6 @@ import json
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.core.config import settings
-from app.memory.rag_engine import RAGEngine
 from app.core.llm_factory import get_llm
 from langchain_core.runnables import RunnableConfig
 
@@ -186,7 +185,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
             # --- 第 2 次调用：生成下半篇 ---
             print("   [Chunk 2] 正在生成下半篇...")
             sys_prompt_part2 = WRITER_SYSTEM_PROMPT.format(
-                recent_chapter_summary=recent_chapter_summary,
+                recent_chapters_summary=recent_chapters_summary,
                 scene_hook_prompt="（这是本章的下半篇，请直接紧接上方【上半篇前文参考】的最后一个动作继续写，绝不要另起炉灶！）",
                 # 替换锚点
                 world_bible=world_bible,

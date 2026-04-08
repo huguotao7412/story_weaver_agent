@@ -1,7 +1,5 @@
 # app/memory/rag_engine.py
-
 import os
-import shutil
 from typing import List, Dict, Any
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
@@ -212,6 +210,8 @@ class RAGEngine:
         """
         供下游 Planner 和 Editor 调用的层级化检索
         """
+        if not query or not query.strip():
+            return "（未提供有效的检索关键词，暂无关联历史）"
         context_str = "【🌟 层级化 RAG 历史与设定参考】\n"
 
         # 1. 混合检索全局库 (Global)
