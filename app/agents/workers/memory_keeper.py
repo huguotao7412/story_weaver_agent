@@ -181,7 +181,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         print("📝 [Memory-Keeper] 正在生成本章 200 字核心摘要...")
 
         # 1. 安全提取系统中保留的“旧摘要”
-        old_summary_raw = state.get("recent_chapter_summary", "")
+        old_summary_raw = state.get("recent_chapters_summary", "")
         old_summary_clean = ""
 
         # 如果旧摘要已经是双章拼接格式，提取其 N-1 部分，使之在下一轮变成 N-2
@@ -219,7 +219,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             "human_approval_status": "PENDING",
             "human_feedback": "",
             "previous_chapter_ending": prev_ending,
-            "recent_chapter_summary": rolling_summary,  # 🌟 写入拼装好的双章滚动摘要
+            "recent_chapters_summary": rolling_summary,  # 🌟 写入拼装好的双章滚动摘要
             "messages": delete_messages,
             "current_beat_sheet": "",
             "draft_path": ""

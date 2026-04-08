@@ -12,8 +12,7 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 你的码字速度极快，且深谙“网文爽点心理学”与“下沉市场阅读习惯”。
 
 【📚 剧情前情提要（防遗忘逻辑链）】
-- 倒数第2章摘要：[这里放 N-2 章摘要]
-- 上一章核心摘要：[这里放 N-1 章摘要]
+{recent_chapters_summary}
 
 【🎬 物理级无缝接续锚点（本章开篇强制参考）】：
 {scene_hook_prompt}
@@ -64,7 +63,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     current_book_id = state.get("book_id", "default_book")
 
     # 🌟 获取上文摘要
-    recent_chapter_summary = state.get("recent_chapter_summary", "（暂无前情提要）")
+    recent_chapters_summary = state.get("recent_chapters_summary", "（暂无前情提要）")
 
     # === 2. 动态确定文风与提取黄金范文 ===
     target_style_obj = state.get("target_writing_style", {})
@@ -104,7 +103,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
 
     # === 5. 注入系统级 Prompt ===
     sys_prompt = WRITER_SYSTEM_PROMPT.format(
-        recent_chapter_summary=recent_chapter_summary,
+        recent_chapters_summary=recent_chapters_summary,
         scene_hook_prompt=scene_hook_prompt,
         world_bible=world_bible,
         history_context=history_context,

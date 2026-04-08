@@ -473,7 +473,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     else:
         climax_rule = "   - 【结算/余波期】核心是展现高潮过后的【满足感】和清点战利品的暗爽，无需战斗。"
         cliffhanger_rule = "   - 【满足钩子】高潮已过，绝对禁止在结尾引出新敌人！结尾必须是战利品清点完毕后的笑容、众人对主角的惊叹，或遥望新目标的憧憬。"
-    recent_chapters_summary = state.get("recent_chapter_summary", "（暂无前情提要）")
+    recent_chapters_summary = state.get("recent_chapters_summary", "（暂无前情提要）")
     # 🌟 修改点 3：将 human_override_instruction 注入系统级 Prompt
     sys_prompt = LAYER4_CHAPTER_PROMPT.format(
         chapter_num=current_chapter_num,
