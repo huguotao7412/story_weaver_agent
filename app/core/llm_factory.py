@@ -66,7 +66,7 @@ def rerank_documents(query: str, documents: List[str], top_n: int = 3) -> List[i
     if not documents:
         return []
 
-    api_key = os.getenv("EMBEDDING_API_KEY")
+    api_key = os.getenv("RERANK_API_KEY")
     # 硅基流动的 Rerank 标准接口
     rerank_url = "https://api.siliconflow.cn/v1/rerank"
 
