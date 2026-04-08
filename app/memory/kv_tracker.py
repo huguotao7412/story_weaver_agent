@@ -2,6 +2,7 @@
 
 import os
 from tinydb import TinyDB, Query
+from filelock import FileLock
 from app.core.config import settings
 
 
@@ -13,10 +14,12 @@ class KVTracker:
 
     def __init__(self, book_id: str = "default_book"):
         db_path = os.path.join(settings.DATA_DIR, book_id, "kv_state.json")
+        lock_path = f"{db_path}.lock"
 
         # 确保目录存在
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.db = TinyDB(db_path)
+        with FileLock(lock_path):
+            self.db = TinyDB(db_path)
 
         # 数据表定义
         self.characters_table = self.db.table('characters')

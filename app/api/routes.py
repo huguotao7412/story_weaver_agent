@@ -259,9 +259,10 @@ async def delete_book(book_id: str):
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (book_id,))
-            await db.execute("DELETE FROM checkpoint_writes WHERE thread_id = ?", (book_id,))
-            await db.execute("DELETE FROM checkpoint_blobs WHERE thread_id = ?", (book_id,))
+            pattern = f"{book_id}%"
+            await db.execute("DELETE FROM checkpoints WHERE thread_id LIKE ?", (pattern,))
+            await db.execute("DELETE FROM checkpoint_writes WHERE thread_id LIKE ?", (pattern,))
+            await db.execute("DELETE FROM checkpoint_blobs WHERE thread_id LIKE ?", (pattern,))
             await db.commit()
     except Exception as e:
         print(f"⚠️ SQLite 清理遇到阻碍: {e}")
