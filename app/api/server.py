@@ -8,7 +8,6 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from app.core.config import settings
 
 from app.api.routes import router
-from app.memory.kv_tracker import KVTracker
 from app.memory.rag_engine import RAGEngine
 from app.agents.graph import build_workflow
 
@@ -23,7 +22,6 @@ async def lifespan(app: FastAPI):
     print("🚀 [Server] 正在启动 StoryWeaver 共创引擎...")
     try:
         print("📦 [Server] 正在连接/初始化 KV 状态数据库...")
-        KVTracker()
         print("📚 [Server] 正在连接/预热 RAG 向量存储空间...")
         RAGEngine()
     except Exception as e:

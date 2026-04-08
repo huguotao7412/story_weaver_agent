@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage, AIMessage
 
 from app.core.llm_factory import get_llm
-from app.memory.kv_tracker import KVTracker
+from app.memory.kv_tracker import AsyncKVTracker
 from app.memory.rag_engine import RAGEngine
 from app.core.config import settings
 
@@ -85,7 +85,11 @@ MEMORY_EXTRACTION_PROMPT = """你是一个专业的网文【记忆更新员】�
 async def memory_keeper_node(state: dict) -> Dict[str, Any]:
     print("🧠 [Memory-Keeper] 章节已获人类批准，正在提取定稿状态，同步至全局 KV 与伏笔池...")
 
-    draft = state.get("draft_content", "")
+    draft_path = state.get("draft_path", "")
+    draft = ""
+    if draft_path and os.path.exists(draft_path):
+        with open(draft_path, "r", encoding="utf-8") as f:
+            draft = f.read()
     chapter_num = state.get("current_chapter_num", 1)
     messages = state.get("messages", [])
     current_book_id = state.get("book_id", "default_book")  # 🌟 提取书名 ID
@@ -93,10 +97,11 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
     if not draft:
         return {}
 
-    tracker = KVTracker(book_id=current_book_id)  # 🌟 隔离实例
-    current_map = tracker.get_global_map()
-    power_rules = tracker.get_power_system_rules()
-    active_threads_snapshot = tracker.get_active_threads_snapshot(current_map=current_map)
+    tracker = AsyncKVTracker(book_id=current_book_id)
+    await tracker.init_db()  # 必须初始化
+    current_map = await tracker.get_global_map()
+    power_rules = await tracker.get_power_system_rules()
+    active_threads_snapshot = await tracker.get_active_threads_snapshot(current_map=current_map)
 
     prompt_messages = [
         SystemMessage(content=MEMORY_EXTRACTION_PROMPT.format(power_system_rules=power_rules)),
@@ -127,19 +132,19 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
     try:
         if memory_updates.map_update.has_changed and memory_updates.map_update.new_map_name:
-            tracker.set_global_map(memory_updates.map_update.new_map_name)
+            await tracker.set_global_map(memory_updates.map_update.new_map_name)
             print(f"   [🗺️ 换地图触发] 主角跨越大地图至: {memory_updates.map_update.new_map_name}")
 
         for cu in memory_updates.character_updates:
-            if cu.is_core: tracker.set_core_character(cu.name, is_core=True)
-            tracker.update_character_state(cu.name, cu.key, cu.value, chapter_num)
+            if cu.is_core: await tracker.set_core_character(cu.name, is_core=True)
+            await tracker.update_character_state(cu.name, cu.key, cu.value, chapter_num)
 
         for iu in memory_updates.item_updates:
-            tracker.update_inventory(iu.owner, iu.item_name, iu.action, chapter_num)
+            await tracker.update_inventory(iu.owner, iu.item_name, iu.action, chapter_num)
 
         for mystery in memory_updates.new_mysteries:
             mystery_dict = mystery.model_dump()
-            tracker.add_unresolved_thread(mystery_dict, chapter_num)
+            await tracker.add_unresolved_thread(mystery_dict, chapter_num)
             print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨 [{mystery_dict['priority']}]: {mystery_dict['content']}")
 
         valid_threads = tracker.threads_table.all()
@@ -147,7 +152,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
         for resolved in memory_updates.resolved_mysteries:
             if resolved.thread_id in valid_ids:
-                tracker.remove_resolved_thread(resolved.thread_id)
+                await tracker.remove_resolved_thread(resolved.thread_id)
                 print(f"   [✨ 填坑完成] 伏笔 [ID: {resolved.thread_id}] 已解决。原因: {resolved.reason}")
             else:
                 print(f"   [🛡️ 幻觉防御] LLM 试图填一个不存在的伏笔 (ID: {resolved.thread_id})，已拦截。")
@@ -180,7 +185,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             "previous_chapter_ending": prev_ending,
             "messages": delete_messages,
             "current_beat_sheet": "",
-            "draft_content": ""
+            "draft_path": ""
         }
 
     except Exception as e:

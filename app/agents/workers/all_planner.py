@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.core.llm_factory import get_llm
 from app.core.context_utils import get_recent_chapters_text
 from app.core.config import settings
-from app.memory.kv_tracker import KVTracker
+from app.memory.kv_tracker import  AsyncKVTracker
 from app.memory.rag_engine import RAGEngine
 
 from protocols.a2a_schemas import BookOutline, VolumePhases, PhaseChapters, ChapterOutline
@@ -251,8 +251,9 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
         book_result: BookOutline = await structured_llm.ainvoke(messages)
         book_json = json.dumps(book_result.model_dump(), ensure_ascii=False, indent=2)
 
-        tracker = KVTracker(book_id=current_book_id)
-        tracker.set_power_system_rules(book_result.power_system_rules)
+        tracker = AsyncKVTracker(book_id=current_book_id)
+        await tracker.init_db()  # 🌟 必须 await 初始化
+        await tracker.set_power_system_rules(book_result.power_system_rules)  # 🌟 必须 await 写入
 
         try:
             rag_engine = RAGEngine(book_id=current_book_id)
@@ -415,11 +416,11 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     query_str = ""
 
     try:
-        tracker = KVTracker(book_id=current_book_id)
-        current_map = tracker.get_global_map()
-        power_rules = tracker.get_power_system_rules()
-
-        current_kv_state = tracker.get_world_bible_snapshot()
+        tracker = AsyncKVTracker(book_id=current_book_id)
+        await tracker.init_db()
+        current_map = await tracker.get_global_map()
+        power_rules = await tracker.get_power_system_rules()
+        current_kv_state = await tracker.get_world_bible_snapshot()
 
         try:
             fast_llm = get_llm(model_type="main", temperature=0.1)
@@ -452,7 +453,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
                 query=phase_chapters, k_global=1, k_volume=2, k_phase=2
             )
 
-        unresolved_threads = tracker.get_active_threads_snapshot(current_map=current_map, query_keywords=query_str)
+        unresolved_threads = await tracker.get_active_threads_snapshot(current_map=current_map, query_keywords=query_str)
         current_kv_state += f"\n\n{unresolved_threads}"
 
     except Exception as e:

@@ -4,6 +4,7 @@
 # 借鉴：principia-ai/WriteHERE 的递归规划与人工干预机制
 # app/agents/supervisor.py
 
+import os
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -31,10 +32,15 @@ def human_review_node(state: dict) -> Dict[str, Any]:
     direct_edits = state.get("direct_edits", "")
     chapter_num = state.get("current_chapter_num", 1)
 
-    draft_updates = {}
+    # 🌟 获取草稿存储路径
+    draft_path = state.get("draft_path", "")
+
     if direct_edits and direct_edits.strip() != "":
-        print("👑 [Supervisor] 检测到总编的手动批改文本，正在强行覆盖原系统草稿...")
-        draft_updates["draft_content"] = direct_edits
+        print("👑 [Supervisor] 检测到总编的手动批改文本，正在强行覆盖原系统本地草稿...")
+        # 🌟 状态瘦身优化：直接覆盖写入本地文件，而不是塞进状态机字典里
+        if draft_path and os.path.exists(draft_path):
+            with open(draft_path, "w", encoding="utf-8") as f:
+                f.write(direct_edits)
 
     # 1. 人类直接批准入库
     if status == "APPROVED":
@@ -46,8 +52,8 @@ def human_review_node(state: dict) -> Dict[str, Any]:
             "direct_edits": "",  # 清空历史状态
             "editor_comments": "PASS",
             "internal_revision_count": 0,  # 重置打回计数器
-            "messages": [msg],
-            **draft_updates  # 注入修改后的草稿
+            "messages": [msg]
+            # 🌟 移除了 **draft_updates，彻底避免巨大的纯文本进入 SQLite
         }
 
     # 2. 人类打回并附加强指令覆盖 (Human Override)

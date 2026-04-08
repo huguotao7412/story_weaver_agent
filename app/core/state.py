@@ -34,7 +34,7 @@ class TomatoNovelState(TypedDict):
     # === 2. 当前章节工作区 (事务隔离的草稿区) ===
     current_chapter_num: int
     current_beat_sheet: str     # 存放第四层：单章节拍器
-    draft_content: str
+    draft_path: str
 
     # === 3. 内部 AI 互搏区 ===
     editor_comments: str

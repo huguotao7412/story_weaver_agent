@@ -1,5 +1,5 @@
 # app/agents/workers/chapter_writer.py
-
+import os
 import json
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -162,8 +162,12 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     )
 
     print(f"✅ [Chapter-Writer] 码字完毕，草稿已推流至操作台！字数：{len(new_draft)}")
+    draft_path = os.path.join(settings.DATA_DIR, current_book_id, f"temp_draft_{current_chapter_num}.txt")
+    with open(draft_path, "w", encoding="utf-8") as f:
+        f.write(new_draft)
+
     return {
-        "draft_content": new_draft,
+        "draft_path": draft_path,  # 只传递路径
         "human_approval_status": "PENDING",
         "messages": [action_message]
     }

@@ -1,5 +1,5 @@
 # app/agents/workers/continuity_editor.py
-
+import os
 import json
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -19,7 +19,11 @@ EDITOR_SYSTEM_PROMPT = """你是一个冷酷无情的网文【内部质检编辑
 """
 
 async def continuity_editor_node(state: dict) -> Dict[str, Any]:
-    draft = state.get("draft_content", "")
+    draft_path = state.get("draft_path", "")
+    draft = ""
+    if draft_path and os.path.exists(draft_path):
+        with open(draft_path, "r", encoding="utf-8") as f:
+            draft = f.read()
     beat_sheet = state.get("current_beat_sheet", "")
     revision_count = state.get("internal_revision_count", 0)
     chapter_num = state.get("current_chapter_num", 1)

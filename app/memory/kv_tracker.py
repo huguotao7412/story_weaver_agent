@@ -1,226 +1,187 @@
 # app/memory/kv_tracker.py
 
 import os
-from tinydb import TinyDB, Query
-from filelock import FileLock
+import json
+import aiosqlite
 from app.core.config import settings
 
 
-class KVTracker:
+class AsyncKVTracker:
     """
-    轻量级键值对(KV)状态追踪器。
-    【百万字升级版】：支持冷热数据分离与地图冻结机制。
+    基于 aiosqlite 的纯异步键值对(KV)状态追踪器。
+    【彻底解决 TinyDB 造成的事件循环阻塞问题】
     """
 
     def __init__(self, book_id: str = "default_book"):
-        db_path = os.path.join(settings.DATA_DIR, book_id, "kv_state.json")
-        lock_path = f"{db_path}.lock"
+        self.db_path = os.path.join(settings.DATA_DIR, book_id, "kv_state.sqlite")
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
-        # 确保目录存在
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        with FileLock(lock_path):
-            self.db = TinyDB(db_path)
-
-        # 数据表定义
-        self.characters_table = self.db.table('characters')
-        self.inventory_table = self.db.table('inventory')
-        self.system_table = self.db.table('system_state')  # 🌟 新增：存放全局状态（如当前所在地图）
-        self.threads_table = self.db.table('unresolved_threads')
+    async def init_db(self):
+        """异步初始化数据库表结构（每次实例化后必须 await 此方法）"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # system_state 表：存放全局环境、规则等
+            await db.execute('''CREATE TABLE IF NOT EXISTS system_state (key TEXT PRIMARY KEY, value TEXT)''')
+            # characters 表：存放角色信息，灵活字段存入 JSON
+            await db.execute('''CREATE TABLE IF NOT EXISTS characters (name TEXT PRIMARY KEY, data TEXT)''')
+            # inventory 表：物品流转
+            await db.execute('''CREATE TABLE IF NOT EXISTS inventory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT, item_name TEXT, acquired_in_chapter INTEGER)''')
+            # threads 表：伏笔池
+            await db.execute('''CREATE TABLE IF NOT EXISTS threads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, priority TEXT, keywords TEXT, related_map TEXT, created_in_chapter INTEGER)''')
+            await db.commit()
 
     # ==========================================
     # 🗺️ 全局地图与核心标签管理
     # ==========================================
-    def set_global_map(self, map_name: str):
-        """更新主角当前所在的全局主地图 (换地图)"""
-        State = Query()
-        self.system_table.upsert(
-            {"key": "current_map", "value": map_name},
-            State.key == "current_map"
-        )
+    async def set_global_map(self, map_name: str):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
+                             ("current_map", map_name))
+            await db.commit()
 
-    def get_global_map(self) -> str:
-        """获取当前的全局主地图"""
-        State = Query()
-        record = self.system_table.search(State.key == "current_map")
-        return record[0]["value"] if record else "新手村"
+    async def get_global_map(self) -> str:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute('SELECT value FROM system_state WHERE key = ?', ("current_map",)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else "新手村"
 
-    def set_core_character(self, name: str, is_core: bool = True):
-        """将角色标记为核心（主角团），无视地图冻结，永久作为热数据保留"""
-        Character = Query()
-        if self.characters_table.search(Character.name == name):
-            self.characters_table.update({"is_core": is_core}, Character.name == name)
-        else:
-            self.characters_table.insert({"name": name, "is_core": is_core, "location": "未知"})
+    async def set_core_character(self, name: str, is_core: bool = True):
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute('SELECT data FROM characters WHERE name = ?', (name,)) as cursor:
+                row = await cursor.fetchone()
+                char_data = json.loads(row[0]) if row else {"name": name, "location": "未知"}
+            char_data["is_core"] = is_core
+            await db.execute('INSERT OR REPLACE INTO characters (name, data) VALUES (?, ?)',
+                             (name, json.dumps(char_data, ensure_ascii=False)))
+            await db.commit()
 
     # ==========================================
     # 👤 角色与物品基础状态更新
     # ==========================================
-    def update_character_state(self, name: str, key: str, value: str, chapter_num: int):
-        """更新/插入角色状态 (如境界、死活、位置)"""
-        Character = Query()
-        char_record = self.characters_table.search(Character.name == name)
+    async def update_character_state(self, name: str, key: str, value: str, chapter_num: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute('SELECT data FROM characters WHERE name = ?', (name,)) as cursor:
+                row = await cursor.fetchone()
+                char_data = json.loads(row[0]) if row else {"name": name, "is_core": False}
 
-        if char_record:
-            # 更新已存在角色（不会覆盖 is_core 等其他已有字段）
-            self.characters_table.update(
-                {key: value, f"last_updated_ch_{key}": chapter_num},
-                Character.name == name
-            )
-        else:
-            # 插入新角色记录 (🌟 默认非核心角色)
-            self.characters_table.insert({
-                "name": name,
-                key: value,
-                "is_core": False,
-                f"last_updated_ch_{key}": chapter_num
-            })
+            char_data[key] = value
+            char_data[f"last_updated_ch_{key}"] = chapter_num
+            await db.execute('INSERT OR REPLACE INTO characters (name, data) VALUES (?, ?)',
+                             (name, json.dumps(char_data, ensure_ascii=False)))
+            await db.commit()
 
-    def update_inventory(self, owner: str, item_name: str, action: str, chapter_num: int):
-        """更新物品归属 (如获得神器、消耗丹药)"""
-        Inventory = Query()
-
-        if action.upper() == "ADD":
-            if not self.inventory_table.search((Inventory.owner == owner) & (Inventory.item_name == item_name)):
-                self.inventory_table.insert({
-                    "owner": owner,
-                    "item_name": item_name,
-                    "acquired_in_chapter": chapter_num
-                })
-        elif action.upper() == "REMOVE":
-            self.inventory_table.remove((Inventory.owner == owner) & (Inventory.item_name == item_name))
+    async def update_inventory(self, owner: str, item_name: str, action: str, chapter_num: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            if action.upper() == "ADD":
+                # 检查是否已存在
+                async with db.execute('SELECT id FROM inventory WHERE owner = ? AND item_name = ?',
+                                      (owner, item_name)) as cursor:
+                    if not await cursor.fetchone():
+                        await db.execute(
+                            'INSERT INTO inventory (owner, item_name, acquired_in_chapter) VALUES (?, ?, ?)',
+                            (owner, item_name, chapter_num))
+            elif action.upper() == "REMOVE":
+                await db.execute('DELETE FROM inventory WHERE owner = ? AND item_name = ?', (owner, item_name))
+            await db.commit()
 
     # ==========================================
-    # 📸 快照生成 (🌟 冷热数据分离引擎 + 死亡清理)
+    # 📸 快照生成 (🌟 冷热数据分离)
     # ==========================================
-    def get_world_bible_snapshot(self) -> str:
-            """
-            供 Planner 和 Writer 调用。
-            执行冷热过滤与生死过滤：只返回 【存活核心角色】 + 【当前地图存活配角】。
-            """
-            current_map = self.get_global_map()
-            all_chars = self.characters_table.all()
+    async def get_world_bible_snapshot(self) -> str:
+        current_map = await self.get_global_map()
+        active_chars = []
+        frozen_count = 0
+        dead_count = 0
 
-            active_chars = []
-            frozen_count = 0
-            dead_count = 0  # 💡 新增：记录已被清理的死者数量
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute('SELECT data FROM characters') as cursor:
+                async for row in cursor:
+                    char = json.loads(row[0])
+                    status = char.get("status", "存活")
 
-            for char in all_chars:
-                is_core = char.get("is_core", False)
-                location = char.get("location", "未知")
-                status = char.get("status", "存活")
+                    if any(keyword in status for keyword in ["死", "亡", "陨落", "灭", "已故"]):
+                        dead_count += 1
+                        continue
 
-                # 💡 核心修复：死亡判定。如果状态包含死/亡/陨落，直接跳过，不占用宝贵的上下文
-                if any(keyword in status for keyword in ["死", "亡", "陨落", "灭", "已故"]):
-                    dead_count += 1
-                    continue
-
-                # 🌟 核心过滤逻辑：你是核心主角团，或者你就在当前地图，才会被唤醒
-                if is_core or location == current_map:
-                    active_chars.append(char)
-                else:
-                    frozen_count += 1
+                    if char.get("is_core", False) or char.get("location", "未知") == current_map:
+                        active_chars.append(char)
+                    else:
+                        frozen_count += 1
 
             snapshot = f"【🗺️ 当前主地图】：{current_map}\n"
-            # 💡 更新提示语，让大模型知道系统做了自动清理
             snapshot += f"【🌟 活跃人物状态快照 (已冻结 {frozen_count} 个跨地图冷数据，清理 {dead_count} 个已故角色)】：\n"
 
             if not active_chars:
                 snapshot += "- 暂无活跃角色记录\n"
-
             for char in active_chars:
-                status = char.get("status", "存活")
-                location = char.get("location", "未知")
-                level = char.get("level", "凡人")
-                # 打上直观的 Tag 方便大模型理解角色重要度
                 core_tag = "[🔥核心主角团]" if char.get("is_core") else "[📍本地配角]"
+                snapshot += f"- {char['name']} {core_tag}: {char.get('status', '存活')} | 境界: {char.get('level', '凡人')} | 位置: {char.get('location', '未知')}\n"
 
-                snapshot += f"- {char['name']} {core_tag}: {status} | 境界: {level} | 位置: {location}\n"
-
-            inventory_items = self.inventory_table.all()
-            if inventory_items:
-                snapshot += "\n【🎒 核心角色物品与功法清单 (极其重要，切勿让角色重复获取)】：\n"
-                for item in inventory_items:
-                    # 告知大模型该物品的归属和获取时间
-                    snapshot += f"- {item['owner']} 拥有/已学会: {item['item_name']} (登记于第{item.get('acquired_in_chapter', '?')}章)\n"
-            else:
-                snapshot += "\n【🎒 核心角色物品】：当前背包空空如也\n"
-
-            return snapshot
+            async with db.execute('SELECT owner, item_name, acquired_in_chapter FROM inventory') as cursor:
+                items = await cursor.fetchall()
+                if items:
+                    snapshot += "\n【🎒 核心角色物品与功法清单】：\n"
+                    for item in items:
+                        snapshot += f"- {item[0]} 拥有/已学会: {item[1]} (登记于第{item[2]}章)\n"
+                else:
+                    snapshot += "\n【🎒 核心角色物品】：当前背包空空如也\n"
+        return snapshot
 
     # ==========================================
-    # ⚖️ 全局战力铁律管理 (新增)
+    # 全局战力与伏笔管理
     # ==========================================
+    async def set_power_system_rules(self, rules: str):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
+                             ("power_system_rules", rules))
+            await db.commit()
 
-    def set_power_system_rules(self, rules: str):
-        State = Query()
-        self.system_table.upsert(
-            {"key": "power_system_rules", "value": rules},
-            State.key == "power_system_rules"
-        )
+    async def get_power_system_rules(self) -> str:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute('SELECT value FROM system_state WHERE key = ?', ("power_system_rules",)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else "（暂无战力设定）"
 
-    def get_power_system_rules(self) -> str:
-        State = Query()
-        record = self.system_table.search(State.key == "power_system_rules")
-        return record[0]["value"] if record else "（暂无战力设定）"
+    async def add_unresolved_thread(self, thread_data: dict, chapter_num: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                'INSERT INTO threads (content, priority, keywords, related_map, created_in_chapter) VALUES (?, ?, ?, ?, ?)',
+                (thread_data["content"], thread_data.get("priority", "Medium"),
+                 json.dumps(thread_data.get("keywords", []), ensure_ascii=False),
+                 thread_data.get("related_map", "未知"), chapter_num))
+            await db.commit()
 
-    # ==========================================
-    # 🕳️ 伏笔池：挖坑与填坑管理
-    # ==========================================
-    def add_unresolved_thread(self, thread_data: dict, chapter_num: int):
-        """挖坑：记录结构化的悬念或死仇"""
-        self.threads_table.insert({
-            "content": thread_data["content"],
-            "priority": thread_data.get("priority", "Medium"),
-            "keywords": thread_data.get("keywords", []),
-            "related_map": thread_data.get("related_map", "未知"),
-            "created_in_chapter": chapter_num
-        })
+    async def remove_resolved_thread(self, thread_id: int):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('DELETE FROM threads WHERE id = ?', (thread_id,))
+            await db.commit()
 
-    def remove_resolved_thread(self, thread_id: int):
-        """填坑：根据 ID 抹除已解决的伏笔"""
-        try:
-            self.threads_table.remove(doc_ids=[thread_id])
-        except Exception as e:
-            print(f"⚠️ [KVTracker] 尝试移除不存在的伏笔 ID {thread_id}: {e}")
-
-    def get_active_threads_snapshot(self, current_map: str, query_keywords: str = "") -> str:
-        """【过滤引擎】根据优先级和地图动态召回伏笔，防止上下文污染"""
-        threads = self.threads_table.all()
-        if not threads:
-            return "（当前暂无未解悬念与未报之仇）"
-
+    async def get_active_threads_snapshot(self, current_map: str, query_keywords: str = "") -> str:
         filtered_threads = []
         hidden_count = 0
 
-        for t in threads:
-            priority = t.get("priority", "Medium")
-            related_map = t.get("related_map", "全局")
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                    'SELECT id, content, priority, keywords, related_map, created_in_chapter FROM threads') as cursor:
+                async for row in cursor:
+                    t = {"id": row[0], "content": row[1], "priority": row[2], "keywords": json.loads(row[3]),
+                         "related_map": row[4], "created_in_chapter": row[5]}
+                    if t["priority"] == "High" or t["related_map"] in ["全局", current_map] or any(
+                            k in query_keywords for k in t["keywords"]):
+                        filtered_threads.append(t)
+                    else:
+                        hidden_count += 1
 
-            # 过滤逻辑：
-            # 1. High 级别绝对保留
-            # 2. 地图匹配 或 属于'全局'的保留
-            # 3. 极其粗略的关键词命中保留
-            if priority == "High" or related_map in ["全局", current_map] or any(
-                    k in query_keywords for k in t.get("keywords", [])):
-                filtered_threads.append(t)
-            else:
-                hidden_count += 1
-
-        # 排序：High 永远在最前面
         priority_map = {"High": 0, "Medium": 1, "Low": 2}
-        filtered_threads.sort(key=lambda x: priority_map.get(x.get("priority", "Medium"), 1))
-
-        # 截断：最多只喂给 LLM 5 个最相关的伏笔
+        filtered_threads.sort(key=lambda x: priority_map.get(x["priority"], 1))
         MAX_THREADS_TO_SHOW = 5
         final_threads = filtered_threads[:MAX_THREADS_TO_SHOW]
 
         snapshot = f"【🕳️ 动态召回未解伏笔池 (已隐藏 {hidden_count + max(0, len(filtered_threads) - MAX_THREADS_TO_SHOW)} 个非活跃跨地图小坑)】：\n"
-        if not final_threads:
-            return snapshot + "- 当前地图暂无待解决悬念\n"
+        if not final_threads: return snapshot + "- 当前地图暂无待解决悬念\n"
 
         for t in final_threads:
-            p_tag = "🔴主线死仇" if t.get('priority') == 'High' else (
-                "🟡支线" if t.get('priority') == 'Medium' else "🟢日常")
-            snapshot += f"- [ID: {t.doc_id}] {p_tag} (第{t['created_in_chapter']}章立下) {t['content']}\n"
-
+            p_tag = "🔴主线死仇" if t['priority'] == 'High' else ("🟡支线" if t['priority'] == 'Medium' else "🟢日常")
+            snapshot += f"- [ID: {t['id']}] {p_tag} (第{t['created_in_chapter']}章立下) {t['content']}\n"
         return snapshot

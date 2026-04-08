@@ -101,7 +101,7 @@ async def get_book_progress(book_id: str):
 
 # === 核心接口 1：流式启动节点 (异步升级版) ===
 @router.post("/stream")
-async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟 添加 request 依赖
+async def generate_novel_stream(req: GenerateRequest, request: Request):
     graph_thread_id = f"{req.thread_id}_chap_{req.chapter_num}"
     config = {"configurable": {"thread_id": graph_thread_id}}
 
@@ -171,6 +171,17 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟
                     # 🌟 核心修复点：防御性编程，确保 state_updates 是字典才执行 .items()
                     if isinstance(state_updates, dict):
                         safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
+
+                        # 🌟🌟 拦截器核心：将本地路径伪装还原为前端需要的明文，实现前端零修改
+                        if "draft_path" in safe_updates:
+                            dp = safe_updates["draft_path"]
+                            if dp and os.path.exists(dp):
+                                with open(dp, "r", encoding="utf-8") as f:
+                                    # 伪造一个 draft_content 给前端 Streamlit 用
+                                    safe_updates["draft_content"] = f.read()
+                            # 删掉物理路径，不将其暴露给前端状态机
+                            del safe_updates["draft_path"]
+
                         payload = {"node": node_name, "updates": safe_updates}
                         yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
                     else:
@@ -185,20 +196,20 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):  # 🌟
                     yield "data: {\"status\": \"PAUSED_FOR_HUMAN_REVIEW\"}\n\n"
 
         except Exception as e:
-            # 🌟 核心监控：将异常的完整堆栈打印在后端终端，绝不让它再“静默消失”
+            # 🌟 核心监控：将异常的完整堆栈打印在后端终端
             traceback.print_exc()
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+
 # === 核心接口 2：接收人类总编反馈并唤醒 (双断点分流修复版) ===
 @router.post("/feedback")
-async def receive_human_feedback(req: FeedbackRequest, request: Request):  # 🌟 添加 request 依赖
+async def receive_human_feedback(req: FeedbackRequest, request: Request):
     graph_thread_id = f"{req.thread_id}_chap_{req.chapter_num}"
     config = {"configurable": {"thread_id": graph_thread_id}}
 
     try:
-        # 🌟 核心修改：去掉了 async with 块，下面的代码整体向左缩进一层
         storyweaver_app = request.app.state.storyweaver_app
 
         current_state = await storyweaver_app.aget_state(config)
@@ -268,6 +279,7 @@ async def delete_book(book_id: str):
         print(f"⚠️ SQLite 清理遇到阻碍: {e}")
 
     return {"status": "success", "message": f"书籍 {book_id} 已被彻底超度。"}
+
 
 @router.delete("/books/{book_id}/chapters/{chapter_num}")
 async def reset_chapter_state(book_id: str, chapter_num: int):
