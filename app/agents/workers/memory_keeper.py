@@ -1,6 +1,6 @@
 # app/agents/workers/memory_keeper.py
 import os
-from typing import Dict, Any, List,Literal
+from typing import Dict, Any, List, Literal
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage, AIMessage
@@ -39,11 +39,14 @@ class ResolvedThread(BaseModel):
     thread_id: int = Field(description="成功填上的伏笔坑的 ID (必须是系统提供的 ID 数字)")
     reason: str = Field(description="简述是如何解决的（例如：主角本章一剑斩杀了反派，大仇得报）")
 
+
 class NewThread(BaseModel):
     content: str = Field(description="伏笔/悬念/仇恨的具体描述")
-    priority: Literal["High", "Medium", "Low"] = Field(description="High:生死大仇/主线; Medium:支线任务/长期约定; Low:日常小坑/未解物品")
+    priority: Literal["High", "Medium", "Low"] = Field(
+        description="High:生死大仇/主线; Medium:支线任务/长期约定; Low:日常小坑/未解物品")
     keywords: List[str] = Field(description="该伏笔涉及的2-3个核心实体关键词（人名/地名/物品）")
     related_map: str = Field(description="该伏笔绑定的宏观大地图名称，如果是贯穿全书的主线请填'全局'")
+
 
 class MemoryExtraction(BaseModel):
     map_update: MapUpdate = Field(description="主角宏观地图变更检测")
@@ -146,15 +149,10 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             await tracker.add_unresolved_thread(mystery_dict, chapter_num)
             print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨 [{mystery_dict['priority']}]: {mystery_dict['content']}")
 
-        valid_threads = tracker.threads_table.all()
-        valid_ids = [t.doc_id for t in valid_threads]
-
+        # 🌟 修复点：移除了 TinyDB 遗留的 tracker.threads_table.all() 语法，直接利用 aiosqlite 进行操作
         for resolved in memory_updates.resolved_mysteries:
-            if resolved.thread_id in valid_ids:
-                await tracker.remove_resolved_thread(resolved.thread_id)
-                print(f"   [✨ 填坑完成] 伏笔 [ID: {resolved.thread_id}] 已解决。原因: {resolved.reason}")
-            else:
-                print(f"   [🛡️ 幻觉防御] LLM 试图填一个不存在的伏笔 (ID: {resolved.thread_id})，已拦截。")
+            await tracker.remove_resolved_thread(resolved.thread_id)
+            print(f"   [✨ 填坑完成] 尝试解决伏笔 [ID: {resolved.thread_id}]。原因: {resolved.reason}")
 
         rag_engine = RAGEngine(book_id=current_book_id)
         if memory_updates.global_events:
@@ -177,23 +175,51 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
         prev_ending = draft[-500:] if len(draft) > 500 else draft
 
-        # 🌟 修改点：利用 Fast 模型轻量级提取本章 200 字摘要，供下一章防重影
+        # ==========================================
+        # 🌟 双章滚动摘要核心逻辑 (Tapered Context)
+        # ==========================================
         print("📝 [Memory-Keeper] 正在生成本章 200 字核心摘要...")
+
+        # 1. 安全提取系统中保留的“旧摘要”
+        old_summary_raw = state.get("recent_chapter_summary", "")
+        old_summary_clean = ""
+
+        # 如果旧摘要已经是双章拼接格式，提取其 N-1 部分，使之在下一轮变成 N-2
+        if "【N-1 刚刚发生的事" in old_summary_raw:
+            try:
+                # 提取上一章的内容块
+                old_summary_clean = old_summary_raw.split("【N-1 刚刚发生的事")[1].split("】:\n")[-1].strip()
+            except:
+                old_summary_clean = old_summary_raw[-400:]
+        else:
+            old_summary_clean = old_summary_raw.replace("（暂无前情提要）", "").replace(
+                "（摘要生成失败，请依赖大纲与碎片历史进行推演）", "").strip()
+            if len(old_summary_clean) > 400:
+                old_summary_clean = old_summary_clean[-400:]  # 保底长度截断
+
+        # 2. 调用小模型生成“本章”摘要
         summary_prompt = f"请将以下这章网文正文压缩为200字的核心剧情摘要。只保留最关键的动作、结果和结尾的悬念，去掉废话和景色描写：\n{draft}"
-        fast_llm = get_llm(model_type="fast", temperature=0.1) # 使用便宜且速度快的小模型
+        fast_llm = get_llm(model_type="fast", temperature=0.1)  # 推荐使用便宜且速度快的小模型
+
         try:
             summary_msg = await fast_llm.ainvoke([HumanMessage(content=summary_prompt)])
-            chapter_summary = summary_msg.content
+            current_summary_text = summary_msg.content.strip()
             print("✅ [Memory-Keeper] 摘要生成成功！")
         except Exception as e:
             print(f"⚠️ [Memory-Keeper] 摘要生成失败: {e}")
-            chapter_summary = "（摘要生成失败，请依赖大纲与碎片历史进行推演）"
+            current_summary_text = "（本章摘要生成失败）"
+
+        # 3. 滚动拼接：将提取出的 N-2 与刚刚生成的 N-1 合成最终的连载脉络
+        if old_summary_clean:
+            rolling_summary = f"【N-2 之前剧情脉络】:\n{old_summary_clean}\n\n【N-1 刚刚发生的事 (第{chapter_num}章)】:\n{current_summary_text}"
+        else:
+            rolling_summary = f"【N-1 刚刚发生的事 (第{chapter_num}章)】:\n{current_summary_text}"
 
         return {
             "human_approval_status": "PENDING",
             "human_feedback": "",
             "previous_chapter_ending": prev_ending,
-            "recent_chapter_summary": chapter_summary, # 🌟 写入状态字典，流转给下一章使用
+            "recent_chapter_summary": rolling_summary,  # 🌟 写入拼装好的双章滚动摘要
             "messages": delete_messages,
             "current_beat_sheet": "",
             "draft_path": ""

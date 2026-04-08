@@ -11,10 +11,11 @@ from langchain_core.runnables import RunnableConfig
 WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场的【网文金牌主笔】。
 你的码字速度极快，且深谙“网文爽点心理学”与“下沉市场阅读习惯”。
 
-【📚 前情提要 (短期记忆与上下文强参考)】：
-{recent_chapter_summary}
+【📚 剧情前情提要（防遗忘逻辑链）】
+- 倒数第2章摘要：[这里放 N-2 章摘要]
+- 上一章核心摘要：[这里放 N-1 章摘要]
 
-【🎬 物理级无缝接续锚点 (绝对红线)】：
+【🎬 物理级无缝接续锚点（本章开篇强制参考）】：
 {scene_hook_prompt}
 
 【核心写作军规 - 必须刻在骨子里】：
@@ -42,7 +43,7 @@ WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场
 【全局文风强约束 (文风白皮书)】：
 {style_guide}
 
-【🔥 黄金范文 (请深度模仿以下行文节奏与白描手法)】：
+【🔥 黄金范文 (极其重要：你必须深度模仿以下片段的“文笔”、“句式长短”和“白描手法”，千万不要只学剧情不学文笔！)】：
 {examples_str}
 """
 
@@ -185,6 +186,16 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
 
             # --- 第 2 次调用：生成下半篇 ---
             print("   [Chunk 2] 正在生成下半篇...")
+            sys_prompt_part2 = WRITER_SYSTEM_PROMPT.format(
+                recent_chapter_summary=recent_chapter_summary,
+                scene_hook_prompt="（这是本章的下半篇，请直接紧接上方【上半篇前文参考】的最后一个动作继续写，绝不要另起炉灶！）",
+                # 替换锚点
+                world_bible=world_bible,
+                history_context=history_context,
+                style_guide=style_guide,
+                examples_str=examples_str,
+                dynamic_hook_rule=dynamic_hook_rule
+            )
             instr_part2 = (
                 f"【下半篇首次生成指令】\n"
                 f"这是本章的后半部分详细节拍器（大纲）：\n{part2_outline}\n"
@@ -192,7 +203,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
                 f"任务：紧接上半篇的情绪和动作，完成下半篇的正文。目标字数 1500 字左右。\n"
                 f"🚨 绝对红线：严禁重复上半篇已经写过的剧情！严厉执行结尾钩子规则！"
             )
-            messages_p2 = [SystemMessage(content=sys_prompt)] + recent_history + [HumanMessage(content=instr_part2)]
+            messages_p2 = [SystemMessage(content=sys_prompt_part2)] + recent_history + [HumanMessage(content=instr_part2)]
 
             part2_draft = "\n\n"
             async for chunk in llm.astream(messages_p2, config=config):

@@ -91,6 +91,7 @@ class AsyncKVTracker:
     async def get_world_bible_snapshot(self) -> str:
         current_map = await self.get_global_map()
         active_chars = []
+        dead_chars = []
         frozen_count = 0
         dead_count = 0
 
@@ -102,6 +103,7 @@ class AsyncKVTracker:
 
                     if any(keyword in status for keyword in ["死", "亡", "陨落", "灭", "已故"]):
                         dead_count += 1
+                        dead_chars.append(f"- {char['name']} (状态: {status})") # 🌟 将死者登记造册
                         continue
 
                     if char.get("is_core", False) or char.get("location", "未知") == current_map:
@@ -126,6 +128,11 @@ class AsyncKVTracker:
                         snapshot += f"- {item[0]} 拥有/已学会: {item[1]} (登记于第{item[2]}章)\n"
                 else:
                     snapshot += "\n【🎒 核心角色物品】：当前背包空空如也\n"
+
+        if dead_chars:
+            snapshot += "\n【☠️ 死亡/陨落名单 (绝对禁止复活，除非世界观允许)】：\n"
+            snapshot += ", ".join(dead_chars) + "\n"
+
         return snapshot
 
     # ==========================================
