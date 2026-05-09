@@ -163,6 +163,7 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 if mode == "messages":
                     msg_chunk, metadata = payload_data
                     if metadata.get("langgraph_node") == "Chapter_Writer" and msg_chunk.content:
+
                         payload = {"type": "chunk", "content": msg_chunk.content}
                         yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 

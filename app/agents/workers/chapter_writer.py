@@ -1,12 +1,14 @@
 # app/agents/workers/chapter_writer.py
 import os
 import json
+import re
 import uuid
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.core.config import settings
 from app.core.llm_factory import get_llm
 from langchain_core.runnables import RunnableConfig
+
 
 WRITER_SYSTEM_PROMPT = """你是一个常年霸榜番茄、塔读等下沉市场的【网文金牌主笔】。
 你的码字速度极快，且深谙“网文爽点心理学”与“下沉市场阅读习惯”。
@@ -164,9 +166,11 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
         # 🌟 首次生成采用分段生成 (Chunked Generation)
         print(f"✍️ [Chapter-Writer] 正在执行分段式码字生成第 {current_chapter_num} 章正文...")
         try:
-            beat_sheet_dict = json.loads(current_beat_sheet)
+            cleaned_sheet = re.sub(r"^```json\s*", "", current_beat_sheet).replace("```", "").strip()
+            beat_sheet_dict = json.loads(cleaned_sheet)
             beats = beat_sheet_dict.get("beats", [])
-        except:
+        except Exception as e:
+            print(f"⚠️ [Chapter-Writer] 大纲 JSON 解析失败，退化为单次生成: {e}")
             beats = []
 
         if len(beats) >= 2:
