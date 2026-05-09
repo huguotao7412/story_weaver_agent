@@ -250,8 +250,11 @@ class RAGEngine:
             recall_k = min(recall_k, len(valid_docs))  # 不能超过总文档数
 
             # == 通道一：FAISS 向量召回 ==
-            faiss_docs = store.similarity_search(query, k=recall_k)
-            faiss_docs = [d for d in faiss_docs if d.metadata.get("type") != "placeholder"]
+            faiss_docs = store.similarity_search(
+                query,
+                k=recall_k,
+                filter=lambda metadata: metadata.get("type") != "placeholder"
+            )
 
             # == 通道二：BM25 缓存召回 (🚀 极大降低 CPU 开销) ==
             bm25 = GLOBAL_BM25_CACHE.get(f"{self.book_id}_{cache_key}")
@@ -281,8 +284,11 @@ class RAGEngine:
 
         except Exception as e:
             print(f"⚠️ [RAG-Engine] 检索/重排构建失败，平滑降级: {e}")
-            raw_results = store.similarity_search(query, k=k)
-            return [d for d in raw_results if d.metadata.get("type") != "placeholder"]
+            return store.similarity_search(
+                query,
+                k=k,
+                filter=lambda metadata: metadata.get("type") != "placeholder"
+            )
 
     def retrieve_context(self, query: str, k_global=2, k_volume=2, k_phase=2) -> str:
         """

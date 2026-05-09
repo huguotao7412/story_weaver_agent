@@ -134,7 +134,8 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 # 从捞取到的历史状态中恢复关键记忆
                 if old_values:
                     for key in ["book_outline_context", "current_volume_phases",
-                                "current_phase_chapters", "previous_chapter_ending"]:
+                                "current_phase_chapters", "previous_chapter_ending",
+                                "recent_chapters_summary", "rag_history_context"]:
                         if key in old_values:
                             run_input[key] = old_values[key]
 
