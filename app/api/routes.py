@@ -6,7 +6,7 @@ import shutil
 import aiosqlite
 import traceback
 from typing import Optional, Literal, Dict, Any
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request,BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
@@ -208,7 +208,7 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
 
 # === 核心接口 2：接收人类总编反馈并唤醒 (双断点分流修复版) ===
 @router.post("/feedback")
-async def receive_human_feedback(req: FeedbackRequest, request: Request):
+async def receive_human_feedback(req: FeedbackRequest, request: Request, background_tasks: BackgroundTasks):
     graph_thread_id = f"{req.thread_id}_chap_{req.chapter_num}"
     config = {"configurable": {"thread_id": graph_thread_id}}
 
@@ -233,14 +233,21 @@ async def receive_human_feedback(req: FeedbackRequest, request: Request):
             await storyweaver_app.aupdate_state(config, human_decision)
 
             if req.approval_status == "APPROVED":
-                async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
-                    pass
+                async def run_memory_keeper():
+                    async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
+                        pass
+                background_tasks.add_task(run_memory_keeper)
+                return {"status": "success", "message": "正文已入库，后台正在提取记忆与生成摘要...", "approval": req.approval_status}
             else:
-                async for event in storyweaver_app.astream(None, config=config, stream_mode="updates"):
-                    if "Human_Review" not in event:
-                        break
-            return {"status": "success", "message": "正文反馈已接收，已同步至状态机。",
-                    "approval": req.approval_status}
+                async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
+                    # 运行直到图再次挂起（会在 Chapter_Writer 处暂停等待 stream 接口唤醒）
+                    pass
+
+                return {
+                    "status": "success",
+                    "message": "打回指令已接收，已同步至状态机并流转至主笔。",
+                    "approval": req.approval_status
+                }
 
         else:
             raise HTTPException(status_code=400, detail="目标节点与当前挂起状态不匹配。")

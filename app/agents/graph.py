@@ -69,7 +69,16 @@ def build_workflow() -> StateGraph:
     workflow.add_node("Continuity_Editor", continuity_editor_node)
 
     # 🌟 修改核心：将硬编码的 workflow.add_edge(START, "Book_Planner") 替换为条件路由
-    workflow.add_conditional_edges(START, planner_router)
+    workflow.add_conditional_edges(
+        START,
+        planner_router,
+        {
+            "Book_Planner": "Book_Planner",
+            "Volume_Planner": "Volume_Planner",
+            "Phase_Planner": "Phase_Planner",
+            "Chapter_Planner": "Chapter_Planner"
+        }
+    )
 
     # 保留内部的顺序级联，如果从高层(如Book_Planner)进入，执行完会自动往下层走
     workflow.add_edge("Book_Planner", "Volume_Planner")

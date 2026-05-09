@@ -95,8 +95,21 @@ class RAGEngine:
     🧠 百万字长篇专用：三层层级化向量检索引擎 (Hierarchical RAG)
     Global(全局) -> Volume(分卷) -> Phase(单期)
     """
+    _instances_cache = {}
+    _lock = threading.Lock()
+
+    def __new__(cls, book_id: str = "default_book"):
+        with cls._lock:
+            if book_id not in cls._instances_cache:
+                instance = super().__new__(cls)
+                cls._instances_cache[book_id] = instance
+                return instance
+            return cls._instances_cache[book_id]
 
     def __init__(self, book_id: str = "default_book"):
+        if hasattr(self, "_initialized") and getattr(self, "_initialized"):
+            return
+
         self.base_dir = os.path.join(settings.DATA_DIR, book_id, "faiss_index")
 
         # 🌟 为三层库分别建立独立的物理存储路径
@@ -119,6 +132,8 @@ class RAGEngine:
         self.global_store = self._load_store(self.global_dir)
         self.volume_store = self._load_store(self.volume_dir)
         self.phase_store = self._load_store(self.phase_dir)
+
+        self._initialized = True
 
         # 🌟 初始化时预热构建一次缓存
         GLOBAL_BM25_CACHE.put(f"{self.book_id}_global", self._build_bm25_cache(self.global_store))
