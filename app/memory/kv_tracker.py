@@ -101,31 +101,23 @@ class AsyncKVTracker:
                     char = json.loads(row[0])
                     status = char.get("status", "存活")
 
-                    # 1. 死亡角色判定（不可复活，单独造册）
                     if any(keyword in status for keyword in ["死", "亡", "陨落", "灭", "已故"]):
                         dead_count += 1
-                        dead_chars.append(f"- {char['name']} (状态: {status})")  # 🌟 将死者登记造册
+                        dead_chars.append(f"- {char['name']} (状态: {status})")
                         continue
 
-                    # 2. 🌟 按需召回过滤逻辑 (On-Demand KV RAG)
-                    # 如果传入了 filter_entities (大纲中提取的实体关键词)，则进行名单过滤
                     if filter_entities is not None:
                         is_core = char.get("is_core", False)
-                        # 双向包含匹配：角色名在关键词中，或者关键词在角色名中
                         name_mentioned = any(name in char['name'] or char['name'] in name for name in filter_entities)
-
-                        # 如果既不是核心主角团，又没有被本期大纲提及，直接冻结隐藏
                         if not is_core and not name_mentioned:
                             frozen_count += 1
                             continue
 
-                    # 3. 活跃与冷数据隔离（仅保留核心或同地图角色）
                     if char.get("is_core", False) or char.get("location", "未知") == current_map:
                         active_chars.append(char)
                     else:
                         frozen_count += 1
 
-            # --- 下方拼接快照字符串的逻辑保持原样 ---
             snapshot = f"【🗺️ 当前主地图】：{current_map}\n"
             snapshot += f"【🌟 活跃人物状态快照 (已冻结 {frozen_count} 个未登场/跨地图冷数据，清理 {dead_count} 个已故角色)】：\n"
 
@@ -151,7 +143,7 @@ class AsyncKVTracker:
         return snapshot
 
     # ==========================================
-    # 全局战力与伏笔管理
+    # 全局战力、设定补丁与伏笔管理 (🌟 模块二升级)
     # ==========================================
     async def set_power_system_rules(self, rules: str):
         async with aiosqlite.connect(self.db_path) as db:
@@ -164,6 +156,19 @@ class AsyncKVTracker:
             async with db.execute('SELECT value FROM system_state WHERE key = ?', ("power_system_rules",)) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else "（暂无战力设定）"
+
+    # 🌟 新增：动态追加世界观补丁
+    async def append_world_rule_patch(self, rule_data: dict):
+        patch_text = f"\n\n【补充设定 - {rule_data['category']}】 {rule_data['rule_name']}：{rule_data['description']}"
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute('SELECT value FROM system_state WHERE key = ?', ("power_system_rules",)) as cursor:
+                row = await cursor.fetchone()
+                current_rules = row[0] if row else "（暂无战力设定）"
+
+            new_rules = current_rules + patch_text
+            await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
+                             ("power_system_rules", new_rules))
+            await db.commit()
 
     async def add_unresolved_thread(self, thread_data: dict, chapter_num: int):
         async with aiosqlite.connect(self.db_path) as db:
@@ -207,3 +212,57 @@ class AsyncKVTracker:
             p_tag = "🔴主线死仇" if t['priority'] == 'High' else ("🟡支线" if t['priority'] == 'Medium' else "🟢日常")
             snapshot += f"- [ID: {t['id']}] {p_tag} (第{t['created_in_chapter']}章立下) {t['content']}\n"
         return snapshot
+
+    # ==========================================
+    # 📚 层级化摘要存储 (🌟 模块一升级)
+    # ==========================================
+    async def save_chapter_summary(self, chapter_num: int, summary: str):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
+                             (f"chapter_summary_{chapter_num}", summary))
+            await db.commit()
+
+    async def get_chapter_summaries(self, start_ch: int, end_ch: int) -> list:
+        summaries = []
+        async with aiosqlite.connect(self.db_path) as db:
+            for i in range(start_ch, end_ch + 1):
+                async with db.execute('SELECT value FROM system_state WHERE key = ?',
+                                      (f"chapter_summary_{i}",)) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        summaries.append(f"第 {i} 章: {row[0]}")
+        return summaries
+
+    async def save_phase_summary(self, phase_num: int, summary: str):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
+                             (f"phase_summary_{phase_num}", summary))
+            await db.commit()
+
+    async def get_phase_summaries(self, start_phase: int, end_phase: int) -> list:
+        summaries = []
+        async with aiosqlite.connect(self.db_path) as db:
+            for i in range(start_phase, end_phase + 1):
+                async with db.execute('SELECT value FROM system_state WHERE key = ?',
+                                      (f"phase_summary_{i}",)) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        summaries.append(f"【第 {i} 期】: {row[0]}")
+        return summaries
+
+    async def save_volume_summary(self, volume_num: int, summary: str):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
+                             (f"volume_summary_{volume_num}", summary))
+            await db.commit()
+
+    async def get_volume_summaries(self, start_volume: int, end_volume: int) -> list:
+        summaries = []
+        async with aiosqlite.connect(self.db_path) as db:
+            for i in range(start_volume, end_volume + 1):
+                async with db.execute('SELECT value FROM system_state WHERE key = ?',
+                                      (f"volume_summary_{i}",)) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        summaries.append(f"《第 {i} 卷总结》: {row[0]}")
+        return summaries

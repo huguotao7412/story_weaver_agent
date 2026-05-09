@@ -4,7 +4,6 @@ import asyncio
 from typing import Dict, Any, List, Literal
 from pydantic import BaseModel, Field
 
-# 🌟 核心修改点 1：移除了 RemoveMessage 的导入，因为不再需要手动删消息了
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from app.core.llm_factory import get_llm
@@ -32,7 +31,7 @@ class CharacterUpdate(BaseModel):
 
 class ItemUpdate(BaseModel):
     owner: str = Field(description="物品的当前所有者")
-    item_name: str = Field(description="物品、法宝、功法、或武技名称")  # 强调功法
+    item_name: str = Field(description="物品、法宝、功法、或武技名称")
     action: str = Field(description="状态动作，必须是 ADD (获得/学会) 或 REMOVE (消耗/遗失/废除)")
     description: str = Field(description="关于获得或消耗的具体描述")
 
@@ -50,37 +49,45 @@ class NewThread(BaseModel):
     related_map: str = Field(description="该伏笔绑定的宏观大地图名称，如果是贯穿全书的主线请填'全局'")
 
 
+# 🌟 新增：世界观动态补丁
+class WorldRuleUpdate(BaseModel):
+    rule_name: str = Field(description="设定名称，如‘大荒剑意法则’、‘元婴期新特征’、‘新宗门背景’")
+    description: str = Field(description="具体设定内容或新境界原理说明")
+    category: Literal["功法原理", "天地法则", "新境界", "势力格局"] = Field(description="设定分类")
+
+
 class MemoryExtraction(BaseModel):
     map_update: MapUpdate = Field(description="主角宏观地图变更检测")
     character_updates: List[CharacterUpdate] = Field(default_factory=list, description="角色状态变更")
     item_updates: List[ItemUpdate] = Field(default_factory=list, description="物品状态变更")
     new_mysteries: List[NewThread] = Field(default_factory=list,
                                            description="【挖坑】本章新挖的悬念坑、未解之谜、新结的死仇或长期约定。必须严格分类和打标！")
-
     resolved_mysteries: List[ResolvedThread] = Field(default_factory=list,
                                                      description="【填坑】对照现有的伏笔池，本章成功彻底解决掉的伏笔")
+    world_rule_updates: List[WorldRuleUpdate] = Field(default_factory=list,
+                                                      description="【世界观补丁】本章如果拓展了世界观、新境界、揭露了新背景，请提取为补丁")
     global_events: List[str] = Field(default_factory=list, description="其他对世界观有影响的全局客观大事件")
 
 
 # ==========================================
-# 🧠 提示词定义区
+# 🧠 提示词定义区 (🌟 增加补丁提取逻辑)
 # ==========================================
 MEMORY_EXTRACTION_PROMPT = """你是一个专业的网文【记忆更新员】（Metadata Tracker）。
-主笔刚刚完成了一章的定稿，你的任务是从这几千字的正文中，提取出对长线剧情有影响的“状态变更”与“伏笔更迭”。
+主笔刚刚完成了一章的定稿，你的任务是从这几千字的正文中，提取出对长线剧情有影响的“状态变更”与“伏笔/设定更迭”。
 
 【🚨 极其重要：境界数值拦截】：
 参考当前战力体系：\n{power_system_rules}\n
-如果本章出现角色境界变更，请务必校验其变更是否符合上述规则！绝不允许出现设定外的新境界！
+如果本章出现角色境界变更，请务必校验其变更是否符合上述规则！绝不允许出现设定外的新境界！（除非明确是主角领悟/系统解锁的新体系，此时请放入补丁）
 
 【百万字长篇特殊指令】：
 1. 🗺️ 换地图检测 (Map Update)：若跨越宏观大区域，务必触发。
 2. 🔥 核心角色打标 (Core Character)：主角团/核心宠物设为 is_core=True。
 3. 🕳️ 挖坑与填坑 (Foreshadowing & Mysteries)：
-   - 【挖坑】：如果本章主角惹了新的大敌、接了任务，请将其提取为 new_mysteries，并严格评估其优先级(High/Medium/Low)和绑定地图！
-   - 【恩怨登记】：如果本章主角救了某人或结了新的死仇，即使对方逃跑，也必须将其作为 High/Medium 级别的伏笔登记在案，明确标注【仇家/恩人】关系，以防未来再遇时模型产生 OOC。
-   - 【填坑】：对照现有的伏笔池，解决掉的提取到 resolved_mysteries 中。
+   - 【挖坑】：惹了新大敌、接了新任务、结了新恩怨，必须打标为 new_mysteries，设定优先级和绑定地图！
+   - 【填坑】：对照现有的伏笔池，解决掉的提取到 resolved_mysteries。
+4. 📜 【世界观补丁 (World Bible Patching)】：如果本章主角领悟了全新的功法底层逻辑、世界抛出了新的力量体系（新境界），或揭露了上古势力的秘密，请将其提取为 `world_rule_updates`，让设定和世界观跟着剧情一起长大。
 
-请务必精准判断，不要将日常的小事当成大伏笔，也不要漏掉真正影响主线的大悬念。
+请务必精准判断，不要将日常的小事当成大伏笔或设定，也不要漏掉真正影响主线的大悬念。
 """
 
 
@@ -96,20 +103,17 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         with open(draft_path, "r", encoding="utf-8") as f:
             draft = f.read()
     chapter_num = state.get("current_chapter_num", 1)
-
-    # 🌟 核心修改点 2：移除了 messages = state.get("messages", [])，因为不再需要读全局消息总线
     current_book_id = state.get("book_id", "default_book")
 
     if not draft:
         return {}
 
     tracker = AsyncKVTracker(book_id=current_book_id)
-    await tracker.init_db()  # 必须初始化
+    await tracker.init_db()
     current_map = await tracker.get_global_map()
     power_rules = await tracker.get_power_system_rules()
     active_threads_snapshot = await tracker.get_active_threads_snapshot(current_map=current_map)
 
-    # 这里的 prompt_messages 只是发给 LLM 的本地变量，不影响全局图状态，保留即可
     prompt_messages = [
         SystemMessage(content=MEMORY_EXTRACTION_PROMPT.format(power_system_rules=power_rules)),
         HumanMessage(
@@ -137,6 +141,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         return {"human_approval_status": "PENDING", "human_feedback": ""}
 
     try:
+        # --- KV 存储更新 ---
         if memory_updates.map_update.has_changed and memory_updates.map_update.new_map_name:
             await tracker.set_global_map(memory_updates.map_update.new_map_name)
             print(f"   [🗺️ 换地图触发] 主角跨越大地图至: {memory_updates.map_update.new_map_name}")
@@ -157,6 +162,12 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             await tracker.remove_resolved_thread(resolved.thread_id)
             print(f"   [✨ 填坑完成] 尝试解决伏笔 [ID: {resolved.thread_id}]。原因: {resolved.reason}")
 
+        # 🌟 应用世界观补丁
+        for patch in memory_updates.world_rule_updates:
+            patch_dict = patch.model_dump()
+            await tracker.append_world_rule_patch(patch_dict)
+            print(f"   [📜 设定进化] 捕获世界观补丁 [{patch_dict['category']}]: {patch_dict['rule_name']}")
+
         rag_engine = RAGEngine(book_id=current_book_id)
         if memory_updates.global_events:
             await asyncio.to_thread(rag_engine.insert_global_events, memory_updates.global_events, chapter_num)
@@ -171,41 +182,70 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         except Exception as e:
             pass
 
-        # 🌟 核心修改点 3：删除了冗长且容易报错的 delete_messages 循环逻辑
-        # (即删除了 for msg in messages[:-2]: ... 这一段)
-
         prev_ending = draft[-500:] if len(draft) > 500 else draft
 
         # ==========================================
-        # 🌟 双章滚动摘要核心逻辑 (Tapered Context)
+        # 🌟 层级化摘要核心逻辑 (统一使用 main 模型)
         # ==========================================
+        main_llm = get_llm(model_type="main", temperature=0.1)
+
         print("📝 [Memory-Keeper] 正在生成本章 200 字核心摘要...")
-
-        old_summary = state.get("recent_chapters_summary", [])
-        if not isinstance(old_summary, list):
-            old_summary = []
-
         summary_prompt = f"请将以下这章网文正文压缩为200字的核心剧情摘要。只保留最关键的动作、结果和结尾的悬念，去掉废话和景色描写：\n{draft}"
-        fast_llm = get_llm(model_type="main", temperature=0.1)
-
         try:
-            summary_msg = await fast_llm.ainvoke([HumanMessage(content=summary_prompt)])
+            summary_msg = await main_llm.ainvoke([HumanMessage(content=summary_prompt)])
             current_summary_text = summary_msg.content.strip()
-            print("✅ [Memory-Keeper] 摘要生成成功！")
+            print("✅ [Memory-Keeper] 单章摘要生成成功入库！")
+            await tracker.save_chapter_summary(chapter_num, current_summary_text)
         except Exception as e:
-            print(f"⚠️ [Memory-Keeper] 摘要生成失败: {e}")
+            print(f"⚠️ [Memory-Keeper] 单章摘要生成失败: {e}")
             current_summary_text = "（本章摘要生成失败）"
+            await tracker.save_chapter_summary(chapter_num, current_summary_text)
 
+        # 维护双章滚动摘要 (用于提供给主笔的短期衔接)
+        old_summary = state.get("recent_chapters_summary", [])
+        if not isinstance(old_summary, list): old_summary = []
         old_summary.append(f"第 {chapter_num} 章: {current_summary_text}")
-        rolling_summary = old_summary[-2:]  # 永远只保留最近两章
+        rolling_summary = old_summary[-2:]
 
-        # 🌟 核心修改点 4：彻底改变返回字典的结构
+        # 🌟 逢十归一：单期压缩 (Phase Summary)
+        if chapter_num % 10 == 0:
+            current_phase = chapter_num // 10
+            print(f"📝 [Memory-Keeper] 触发【单期摘要】压缩：正在归纳第 {current_phase} 期大事件...")
+            start_ch = chapter_num - 9
+            phase_chapters_text_list = await tracker.get_chapter_summaries(start_ch, chapter_num)
+            phase_chapters_text = "\n".join(phase_chapters_text_list)
+
+            phase_summary_prompt = f"你是一个网文主编。以下是本书第 {start_ch} 章到第 {chapter_num} 章的各章剧情摘要：\n{phase_chapters_text}\n\n请将这10章的剧情浓缩为一份500字的《单期核心脉络总结》。重点保留主角的核心冲突转移、境界变化、重要法宝获得以及人物关系的重大改变。"
+            try:
+                phase_summary_msg = await main_llm.ainvoke([HumanMessage(content=phase_summary_prompt)])
+                await tracker.save_phase_summary(current_phase, phase_summary_msg.content.strip())
+                print(f"✅ [Memory-Keeper] 第 {current_phase} 期宏观脉络总结完成入库！")
+            except Exception as e:
+                print(f"⚠️ [Memory-Keeper] 单期摘要压缩失败: {e}")
+
+        # 🌟 逢五十归一：单卷压缩 (Volume Summary)
+        if chapter_num % 50 == 0:
+            current_volume = chapter_num // 50
+            print(f"📝 [Memory-Keeper] 触发【单卷摘要】终极压缩：正在归纳第 {current_volume} 卷史诗剧情...")
+            start_phase = (current_volume - 1) * 5 + 1
+            end_phase = current_volume * 5
+            volume_phases_text_list = await tracker.get_phase_summaries(start_phase, end_phase)
+            volume_phases_text = "\n\n".join(volume_phases_text_list)
+
+            volume_summary_prompt = f"你是一个白金网文大帝。以下是本书第 {current_volume} 卷（共50章，5个期）的分期核心脉络总结：\n{volume_phases_text}\n\n请将这一整卷的剧情浓缩为一份800字的《本卷剧情终极回顾》。必须讲清楚：本卷起因、核心大高潮是怎样打的、击杀了什么重要敌人、主角获得了什么底牌，以及本卷结尾留向下一卷的钩子。"
+            try:
+                volume_summary_msg = await main_llm.ainvoke([HumanMessage(content=volume_summary_prompt)])
+                await tracker.save_volume_summary(current_volume, volume_summary_msg.content.strip())
+                print(f"✅ [Memory-Keeper] 第 {current_volume} 卷剧情终极回顾完成入库！")
+            except Exception as e:
+                print(f"⚠️ [Memory-Keeper] 单卷摘要压缩失败: {e}")
+
         return {
             "human_approval_status": "PENDING",
             "human_feedback": "",
             "previous_chapter_ending": prev_ending,
             "recent_chapters_summary": rolling_summary,
-            "revision_history": [],  # ✨ 这里是关键：本章定稿入库，强制将状态机里的打回历史清空，零负荷进入下一章！
+            "revision_history": [],
             "current_beat_sheet": "",
             "draft_path": ""
         }

@@ -29,12 +29,22 @@ LAYER1_BOOK_PROMPT = """你是一个白金级网文【全书总架构师】。
 请直接调用系统提供的函数/工具 (Function Calling) 来提交你的结构化数据，无需输出其他解释性文本。
 """
 
-# 2. 第二层：分卷五期大纲
+# 2. 第二层：分卷五期大纲 (🌟 融入软修正机制)
 LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
 你的任务是提取《全书总纲》中【第 {current_volume_num} 卷】的核心目标，将其严格切分为【5期】（每期约10章，本卷共50章）。
 
-【全局世界观与十卷总纲】：
+【初始全局世界观与十卷总纲】：
 {book_outline}
+
+【🚨 当前真实世界快照 (最新状态与装备)】：
+{kv_snapshot}
+
+【📜 宏观前情回顾 (前几卷的真实剧情史诗回顾)】：
+{previous_volume_summaries}
+
+【🔥 最高权限红线：软修正与动态推演】：
+你现在拥有《初始大纲》和《当前真实世界快照》及《前情回顾》。主角的实际发展可能已偏离最初的设定（例如原定反派提前死亡、获得了意料之外的法宝或新境界）。
+在规划新一卷时，**必须以【真实的快照和前情回顾】为绝对基准！**如果初始总纲的规划与现实冲突，请自动抛弃旧大纲的设定，顺着当前的真实脉络，为主线重新制定合理的下一卷剧情走向！
 
 要求：必须采用“腰部小高潮+尾部大高潮”的经典五幕剧结构！
 - 第1期（潜龙在渊）：初入新地图，试探、情报收集、稳扎稳打。
@@ -47,13 +57,22 @@ LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
 请直接调用系统提供的函数/工具 (Function Calling) 来提交你的结构化数据，无需输出其他解释性文本。
 """
 
-# 3. 第三层：单期十章 (10章)
+# 3. 第三层：单期十章 (10章) (🌟 融入软修正机制)
 LAYER3_PHASE_PROMPT = """你是一个精细的网文【单期统筹编剧】。
 你的任务是基于当前卷的【{current_phase_name}】目标，规划出具体的【十章】剧情梗概。
 
-【本卷规划与历史参考】：
+【本卷宏观规划与历史参考】：
 {volume_phases}
 {history_context}
+
+【🚨 当前真实世界快照 (最新状态与装备)】：
+{kv_snapshot}
+
+【📜 前情回顾 (本卷前几期的真实剧情总结)】：
+{previous_phase_summaries}
+
+【🔥 最高权限红线：软修正与动态推演】：
+你现在拥有《本卷宏观规划》和《当前真实世界快照》及《前情回顾》。在拆解本期大纲时，**必须以【真实的快照和前情回顾】为绝对基准！**如果上层宏观规划与当前的现实冲突（例如某配角已死），请自动抛弃旧规划设定，顺着当前的真实脉络微调本期的走向！
 
 【🌟核心心流公式（必须遵守）】：
 这10章的节奏必须遵循“3低-3中-3高-1低”的波浪线，并为每章打上 tension_level 标签：
@@ -223,9 +242,7 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
     print(f"📚 [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...")
     llm = get_llm(model_type="main", temperature=0.3)
 
-    # 🌟 核心修改点：直接从 state 里拿 user_input，而不是去 messages 里翻找
     user_input = state.get("user_input", "请按网文套路推进")
-
     world_bible_preset = state.get("world_bible_context", "")
 
     if world_bible_preset:
@@ -272,7 +289,7 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
 # 🗺️ 节点二：分卷三期规划师 (Volume Planner)
 # ==========================================
 async def volume_planner_node(state: dict) -> Dict[str, Any]:
-    """负责将当前卷切分为前、中、后三期"""
+    """负责将当前卷切分为前、中、后三期 (🌟 支持动态软修正)"""
     volume_phases = state.get("current_volume_phases", "")
     current_chapter_num = state.get("current_chapter_num", 1)
     current_book_id = state.get("book_id", "default_book")
@@ -283,23 +300,37 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
     if volume_phases and volume_phases.strip() != "" and not is_new_volume:
         return {"is_volume_initialized": True}
 
-    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在将本卷切分为【五期】...")
+    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在提取底层状态进行软修正...")
 
     llm = get_llm(model_type="main", temperature=0.3)
     book_outline = state.get("book_outline_context", "暂无总纲")
+
+    # 🌟 获取最新快照与宏观前情回顾
+    tracker = AsyncKVTracker(book_id=current_book_id)
+    await tracker.init_db()
+    kv_snapshot = await tracker.get_world_bible_snapshot()
+
+    prev_volumes_text = "（这是本书第一卷，暂无前卷剧情）"
+    if current_volume_num > 1:
+        summaries = await tracker.get_volume_summaries(1, current_volume_num - 1)
+        if summaries:
+            prev_volumes_text = "\n\n".join(summaries)
 
     structured_llm = llm.with_structured_output(VolumePhases, method="function_calling")
     try:
         phase_result: VolumePhases = await structured_llm.ainvoke([
             SystemMessage(content=LAYER2_VOLUME_PROMPT.format(
                 book_outline=book_outline,
-                current_volume_num=current_volume_num
+                current_volume_num=current_volume_num,
+                kv_snapshot=kv_snapshot,
+                previous_volume_summaries=prev_volumes_text
             )),
-            HumanMessage(content="请生成当前分卷的五期拆解大纲。")
+            HumanMessage(content="请根据当前的真实世界快照和前卷史诗回顾，修正并推演当前分卷的五期拆解大纲。")
         ])
         phase_json = json.dumps(phase_result.model_dump(), ensure_ascii=False, indent=2)
+
         if current_chapter_num > 1 and is_new_volume:
-            print("🧹 [Volume-Planner] 新卷大纲生成成功！正在安全清理上一卷的 RAG 剧情库，迎接新地图...")
+            print("🧹 [Volume-Planner] 动态新卷大纲生成成功！正在安全清理上一卷的局部 RAG 细节...")
             try:
                 await asyncio.to_thread(RAGEngine(book_id=current_book_id).reset_volume_store)
             except Exception as e:
@@ -307,7 +338,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
 
         return {"current_volume_phases": phase_json, "is_volume_initialized": True}
     except Exception as e:
-        print(f"⚠️ [Volume-Planner] 异常: {e}。旧大纲和旧 RAG 数据已保留，防止断档。")
+        print(f"⚠️ [Volume-Planner] 异常: {e}。旧大纲已保留，防止断档。")
         return {"is_volume_initialized": False}
 
 
@@ -315,7 +346,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
 # 🗺️ 节点三：单期统筹编剧 (Phase Planner)
 # ==========================================
 async def phase_planner_node(state: dict) -> Dict[str, Any]:
-    """负责将当前期切分为 10 章具体梗概"""
+    """负责将当前期切分为 10 章具体梗概 (🌟 支持动态软修正)"""
     phase_chapters = state.get("current_phase_chapters", "")
     current_chapter_num = state.get("current_chapter_num", 1)
     current_book_id = state.get("book_id", "default_book")
@@ -325,16 +356,30 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
     if phase_chapters and phase_chapters.strip() != "" and not is_new_phase:
         return {"is_phase_initialized": True}
 
+    current_volume_num = (current_chapter_num - 1) // 50 + 1
+    absolute_phase_num = (current_chapter_num - 1) // 10 + 1
     current_phase_index = ((current_chapter_num - 1) % 50) // 10
     current_phase_name = f"第 {current_phase_index + 1} 期"
+    start_phase_of_volume = (current_volume_num - 1) * 5 + 1
 
-    print(f"📑 [Phase-Planner] 触发跨期推演！当前进入本卷的【{current_phase_name}】，推演十章剧情...")
+    print(f"📑 [Phase-Planner] 触发跨期推演！当前进入【{current_phase_name}】，正在提取本卷真实剧情碎片...")
 
     llm = get_llm(model_type="main", temperature=0.2)
     world_bible = state.get("world_bible_context", "")
 
     raw_volume_phases = state.get("current_volume_phases", "")
     focused_volume_phases = get_focused_volume_phases(raw_volume_phases, current_chapter_num)
+
+    # 🌟 获取最新快照与本卷已发生的前几期回顾
+    tracker = AsyncKVTracker(book_id=current_book_id)
+    await tracker.init_db()
+    kv_snapshot = await tracker.get_world_bible_snapshot()
+
+    prev_phases_text = "（本卷刚开始，暂无本卷的前期剧情回顾）"
+    if absolute_phase_num > start_phase_of_volume:
+        summaries = await tracker.get_phase_summaries(start_phase_of_volume, absolute_phase_num - 1)
+        if summaries:
+            prev_phases_text = "\n\n".join(summaries)
 
     try:
         rag_engine = RAGEngine(book_id=current_book_id)
@@ -351,13 +396,16 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
                 world_bible=world_bible,
                 volume_phases=focused_volume_phases,
                 history_context=history_context,
+                kv_snapshot=kv_snapshot,
+                previous_phase_summaries=prev_phases_text,
                 current_phase_name=current_phase_name
             )),
-            HumanMessage(content="请推演本期 10 章的具体梗概。")
+            HumanMessage(content="请结合真实的当前状态快照和本卷前情回顾，动态推演修正本期 10 章的具体梗概。")
         ])
         chapters_json = json.dumps(chapters_result.model_dump(), ensure_ascii=False, indent=2)
+
         if current_chapter_num > 1 and is_new_phase:
-            print("🧹 [Phase-Planner] 新期推演成功！正在安全清理上一期的 RAG 细节碎片，防止记忆污染...")
+            print("🧹 [Phase-Planner] 动态新期推演成功！正在安全清理上一期的微观 RAG 碎片...")
             try:
                 await asyncio.to_thread(RAGEngine(book_id=current_book_id).reset_phase_store)
             except Exception as e:
@@ -365,7 +413,7 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
 
         return {"current_phase_chapters": chapters_json, "is_phase_initialized": True}
     except Exception as e:
-        print(f"⚠️ [Phase-Planner] 异常: {e}。旧大纲和旧 RAG 细节已保留。")
+        print(f"⚠️ [Phase-Planner] 异常: {e}。旧大纲和旧细节已保留。")
         return {"is_phase_initialized": False}
 
 
@@ -378,8 +426,6 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     current_book_id = state.get("book_id", "default_book")
     print(f"📍 [Chapter-Planner] 正在严格对齐本期十章梗概，拆解第 {current_chapter_num} 章节拍器...")
 
-    # 🌟 核心修改点：彻底删除了那个容易报错的 `for msg in reversed(messages):` 循环
-    # 直接提取人类总编在前端 UI 下达的最新剧情指令
     latest_user_instruction = state.get("user_input", "")
 
     # 组装高优先级覆写文本
@@ -484,7 +530,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
         climax_rule = "   - 【结算/余波期】核心是展现高潮过后的【满足感】和清点战利品的暗爽，无需战斗。"
         cliffhanger_rule = "   - 【满足钩子】高潮已过，绝对禁止在结尾引出新敌人！结尾必须是战利品清点完毕后的笑容、众人对主角的惊叹，或遥望新目标的憧憬。"
 
-    # 🌟 修复队列读取：使用 recent_chapter_summaries
+    # 🌟 修复队列读取：使用 recent_chapters_summary
     summary_list = state.get("recent_chapters_summary", [])
     recent_chapters_summary = "\n\n".join([f"【N-{len(summary_list) - i} 前情脉络】:\n{text}" for i, text in
                                            enumerate(summary_list)]) if summary_list else "（暂无前情提要）"
