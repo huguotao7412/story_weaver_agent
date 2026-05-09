@@ -9,11 +9,9 @@ class TomatoNovelState(TypedDict):
 
     book_id: str
 
-    chapter_num: int
     is_book_initialized: bool
     is_volume_initialized: bool
     is_phase_initialized: bool
-
 
     # 消息总线
     user_input: str  # 仅存放用户下达的初始脑洞/修改指令

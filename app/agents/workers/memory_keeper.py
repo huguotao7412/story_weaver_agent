@@ -202,8 +202,8 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             await tracker.save_chapter_summary(chapter_num, current_summary_text)
 
         # 维护双章滚动摘要 (用于提供给主笔的短期衔接)
-        old_summary = state.get("recent_chapters_summary", [])
-        if not isinstance(old_summary, list): old_summary = []
+        old_summary_raw = state.get("recent_chapters_summary", [])
+        old_summary = list(old_summary_raw) if isinstance(old_summary_raw, list) else []
         old_summary.append(f"第 {chapter_num} 章: {current_summary_text}")
         rolling_summary = old_summary[-2:]
 

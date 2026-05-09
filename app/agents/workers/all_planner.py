@@ -262,27 +262,35 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
         HumanMessage(content=prompt_content)
     ]
 
-    try:
-        book_result: BookOutline = await structured_llm.ainvoke(messages)
-        book_json = json.dumps(book_result.model_dump(), ensure_ascii=False, indent=2)
-
-        tracker = AsyncKVTracker(book_id=current_book_id)
-        await tracker.init_db()
-        await tracker.set_power_system_rules(book_result.power_system_rules)
-
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
-            rag_engine = RAGEngine(book_id=current_book_id)
-            await asyncio.to_thread(rag_engine.insert_world_bible,
-                                    [{"title": "全书世界观与总纲", "content": book_json}])
-            print("✅ [Book-Planner] 《全书总纲》已成功灌入全局 RAG 向量空间。")
-        except Exception as e:
-            print(f"⚠️ [Book-Planner] RAG 持久化异常: {e}")
+            book_result: BookOutline = await structured_llm.ainvoke(messages)
+            book_json = json.dumps(book_result.model_dump(), ensure_ascii=False, indent=2)
 
-        return {"book_outline_context": book_json, "world_bible_context": book_result.world_lore,
-                "is_book_initialized": True}
-    except Exception as e:
-        print(f"⚠️ [Book-Planner] 异常: {e}")
-        return {"is_book_initialized": False}
+            tracker = AsyncKVTracker(book_id=current_book_id)
+            await tracker.init_db()
+            await tracker.set_power_system_rules(book_result.power_system_rules)
+
+            try:
+                rag_engine = RAGEngine(book_id=current_book_id)
+                await asyncio.to_thread(rag_engine.insert_world_bible,
+                                        [{"title": "全书世界观与总纲", "content": book_json}])
+                print("✅ [Book-Planner] 《全书总纲》已成功灌入全局 RAG 向量空间。")
+            except Exception as e:
+                print(f"⚠️ [Book-Planner] RAG 持久化异常: {e}")
+
+            return {"book_outline_context": book_json, "world_bible_context": book_result.world_lore,
+                    "is_book_initialized": True}
+        except Exception as e:
+            print(f"⚠️ [Book-Planner] 第 {attempt + 1} 次生成总纲格式异常: {e}")
+            if attempt < max_retries - 1:
+                messages.append(AIMessage(content="你的输出格式有误，导致 JSON 解析失败。"))
+                messages.append(HumanMessage(
+                    content=f"系统的报错信息：{str(e)}\n请检查必填字段是否遗漏，并严格按照 JSON Schema 重新输出。"))
+            else:
+                print("❌ [Book-Planner] 连续 3 次生成失败，总纲初始化终止。")
+                return {"is_book_initialized": False}
 
 
 # ==========================================
@@ -317,29 +325,39 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
             prev_volumes_text = "\n\n".join(summaries)
 
     structured_llm = llm.with_structured_output(VolumePhases, method="function_calling")
-    try:
-        phase_result: VolumePhases = await structured_llm.ainvoke([
-            SystemMessage(content=LAYER2_VOLUME_PROMPT.format(
-                book_outline=book_outline,
-                current_volume_num=current_volume_num,
-                kv_snapshot=kv_snapshot,
-                previous_volume_summaries=prev_volumes_text
-            )),
-            HumanMessage(content="请根据当前的真实世界快照和前卷史诗回顾，修正并推演当前分卷的五期拆解大纲。")
-        ])
-        phase_json = json.dumps(phase_result.model_dump(), ensure_ascii=False, indent=2)
+    prompt_messages = [
+        SystemMessage(content=LAYER2_VOLUME_PROMPT.format(
+            book_outline=book_outline,
+            current_volume_num=current_volume_num,
+            kv_snapshot=kv_snapshot,
+            previous_volume_summaries=prev_volumes_text
+        )),
+        HumanMessage(content="请根据当前的真实世界快照和前卷史诗回顾，修正并推演当前分卷的五期拆解大纲。")
+    ]
 
-        if current_chapter_num > 1 and is_new_volume:
-            print("🧹 [Volume-Planner] 动态新卷大纲生成成功！正在安全清理上一卷的局部 RAG 细节...")
-            try:
-                await asyncio.to_thread(RAGEngine(book_id=current_book_id).reset_volume_store)
-            except Exception as e:
-                print(f"⚠️ RAG 清理异常: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            phase_result: VolumePhases = await structured_llm.ainvoke(prompt_messages)
+            phase_json = json.dumps(phase_result.model_dump(), ensure_ascii=False, indent=2)
 
-        return {"current_volume_phases": phase_json, "is_volume_initialized": True}
-    except Exception as e:
-        print(f"⚠️ [Volume-Planner] 异常: {e}。旧大纲已保留，防止断档。")
-        return {"is_volume_initialized": False}
+            if current_chapter_num > 1 and is_new_volume:
+                print("🧹 [Volume-Planner] 动态新卷大纲生成成功！正在安全清理上一卷的局部 RAG 细节...")
+                try:
+                    await asyncio.to_thread(RAGEngine(book_id=current_book_id).reset_volume_store)
+                except Exception as e:
+                    print(f"⚠️ RAG 清理异常: {e}")
+
+            return {"current_volume_phases": phase_json, "is_volume_initialized": True}
+        except Exception as e:
+            print(f"⚠️ [Volume-Planner] 第 {attempt + 1} 次生成大纲格式异常: {e}")
+            if attempt < max_retries - 1:
+                prompt_messages.append(AIMessage(content="你的输出格式有误，导致 JSON 解析失败。"))
+                prompt_messages.append(HumanMessage(
+                    content=f"系统的报错信息：{str(e)}\n请检查必填字段是否遗漏，并严格按照 JSON Schema 重新输出。"))
+            else:
+                print("❌ [Volume-Planner] 连续 3 次生成失败，旧大纲已保留，防止断档。")
+                return {"is_volume_initialized": False}
 
 
 # ==========================================
@@ -390,31 +408,41 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
         history_context = "（暂无历史）"
 
     structured_llm = llm.with_structured_output(PhaseChapters, method="function_calling")
-    try:
-        chapters_result: PhaseChapters = await structured_llm.ainvoke([
-            SystemMessage(content=LAYER3_PHASE_PROMPT.format(
-                world_bible=world_bible,
-                volume_phases=focused_volume_phases,
-                history_context=history_context,
-                kv_snapshot=kv_snapshot,
-                previous_phase_summaries=prev_phases_text,
-                current_phase_name=current_phase_name
-            )),
-            HumanMessage(content="请结合真实的当前状态快照和本卷前情回顾，动态推演修正本期 10 章的具体梗概。")
-        ])
-        chapters_json = json.dumps(chapters_result.model_dump(), ensure_ascii=False, indent=2)
+    prompt_messages = [
+        SystemMessage(content=LAYER3_PHASE_PROMPT.format(
+            world_bible=world_bible,
+            volume_phases=focused_volume_phases,
+            history_context=history_context,
+            kv_snapshot=kv_snapshot,
+            previous_phase_summaries=prev_phases_text,
+            current_phase_name=current_phase_name
+        )),
+        HumanMessage(content="请结合真实的当前状态快照和本卷前情回顾，动态推演修正本期 10 章的具体梗概。")
+    ]
 
-        if current_chapter_num > 1 and is_new_phase:
-            print("🧹 [Phase-Planner] 动态新期推演成功！正在安全清理上一期的微观 RAG 碎片...")
-            try:
-                await asyncio.to_thread(RAGEngine(book_id=current_book_id).reset_phase_store)
-            except Exception as e:
-                pass
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            chapters_result: PhaseChapters = await structured_llm.ainvoke(prompt_messages)
+            chapters_json = json.dumps(chapters_result.model_dump(), ensure_ascii=False, indent=2)
 
-        return {"current_phase_chapters": chapters_json, "is_phase_initialized": True}
-    except Exception as e:
-        print(f"⚠️ [Phase-Planner] 异常: {e}。旧大纲和旧细节已保留。")
-        return {"is_phase_initialized": False}
+            if current_chapter_num > 1 and is_new_phase:
+                print("🧹 [Phase-Planner] 动态新期推演成功！正在安全清理上一期的微观 RAG 碎片...")
+                try:
+                    await asyncio.to_thread(RAGEngine(book_id=current_book_id).reset_phase_store)
+                except Exception as e:
+                    pass
+
+            return {"current_phase_chapters": chapters_json, "is_phase_initialized": True}
+        except Exception as e:
+            print(f"⚠️ [Phase-Planner] 第 {attempt + 1} 次生成大纲格式异常: {e}")
+            if attempt < max_retries - 1:
+                prompt_messages.append(AIMessage(content="你的输出格式有误，导致 JSON 解析失败。"))
+                prompt_messages.append(HumanMessage(
+                    content=f"系统的报错信息：{str(e)}\n请检查必填字段是否遗漏，并严格按照 JSON Schema 重新输出。"))
+            else:
+                print("❌ [Phase-Planner] 连续 3 次生成失败，旧大纲和旧细节已保留。")
+                return {"is_phase_initialized": False}
 
 
 # ==========================================

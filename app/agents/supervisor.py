@@ -39,7 +39,8 @@ def human_review_node(state: dict) -> Dict[str, Any]:
     if direct_edits and direct_edits.strip() != "":
         print("👑 [Supervisor] 检测到总编的手动批改文本，正在强行覆盖原系统本地草稿...")
         # 🌟 状态瘦身优化：直接覆盖写入本地文件，而不是塞进状态机字典里
-        if draft_path and os.path.exists(draft_path):
+        if draft_path:  # ✅ 只要路径存在，强行覆盖/创建
+            os.makedirs(os.path.dirname(draft_path), exist_ok=True)
             with open(draft_path, "w", encoding="utf-8") as f:
                 f.write(direct_edits)
 
@@ -53,8 +54,6 @@ def human_review_node(state: dict) -> Dict[str, Any]:
             "direct_edits": "",  # 清空历史状态
             "editor_comments": "PASS",
             "internal_revision_count": 0,  # 重置打回计数器
-            "messages": [msg]
-            # 🌟 移除了 **draft_updates，彻底避免巨大的纯文本进入 SQLite
         }
 
     # 2. 人类打回并附加强指令覆盖 (Human Override)
