@@ -126,8 +126,15 @@ class RAGEngine:
     # ==========================================
     def _load_store(self, path):
         """尝试加载本地 FAISS 索引"""
-        if os.path.exists(os.path.join(path, "index.faiss")):
-            return FAISS.load_local(path, self.embeddings, allow_dangerous_deserialization=True)
+        index_path = os.path.join(path, "index.faiss")
+        if os.path.exists(index_path):
+            try:
+                # 尝试加载，如果文件损坏会抛出异常
+                return FAISS.load_local(path, self.embeddings, allow_dangerous_deserialization=True)
+            except Exception as e:
+                print(f"⚠️ [RAG-Engine] 检测到索引文件损坏，正在抛弃损坏档 ({e})")
+                # 发生损坏直接当作没有库，返回 None，让系统自动从零重新构建
+                return None
         return None
 
     def _save_store(self, store, path):

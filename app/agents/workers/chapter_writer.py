@@ -242,6 +242,8 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     with open(draft_path, "w", encoding="utf-8") as f:
         f.write(new_draft)
 
+    os.makedirs(os.path.dirname(draft_path), exist_ok=True)
+
     # 仅仅返回纯状态，不再向状态机注入导致膨胀的 Message 对象
     return {
         "draft_path": draft_path,

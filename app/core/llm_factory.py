@@ -14,13 +14,13 @@ def get_llm(model_type: str = "main", temperature: float = None) -> ChatOpenAI:
     """
     if model_type == "fast":
         api_key = os.getenv("FAST_LLM_API_KEY")
-        base_url = os.getenv("FAST_LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
-        model_name = os.getenv("FAST_LLM_MODEL_NAME", "glm-4-flash")
+        base_url = os.getenv("FAST_LLM_BASE_URL", "https://api.deepseek.com/v1")
+        model_name = os.getenv("FAST_LLM_MODEL_NAME", "deepseek-v4-flash")
         default_temp = 0.2
     elif model_type == "main":
         api_key = os.getenv("MAIN_LLM_API_KEY")
         base_url = os.getenv("MAIN_LLM_BASE_URL", "https://api.deepseek.com/v1")
-        model_name = os.getenv("MAIN_LLM_MODEL_NAME", "deepseek-chat")
+        model_name = os.getenv("MAIN_LLM_MODEL_NAME", "deepseek-v4-flash")
         default_temp = 0.4
     else:
         raise ValueError(f"未知的 model_type: {model_type}")
