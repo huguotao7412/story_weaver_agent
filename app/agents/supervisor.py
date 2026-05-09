@@ -62,19 +62,12 @@ def human_review_node(state: dict) -> Dict[str, Any]:
         if not feedback:
             feedback = "草稿质量不佳，请主笔重新构思并重写本章。"
 
-        override_msg = HumanMessage(
-            content=f"【人类总编最高指令】：{feedback}",
-            name="Human_Editor",
-            id = str(uuid.uuid4())
-        )
-
-        # 借鉴 WriteHERE 的递归规划：不仅是“打回”，而是将人类逻辑注入下一次生成
+        new_history = state.get("revision_history", []) + [f"【总编打回】: {feedback}"]
         return {
             "human_approval_status": "REJECTED",
             "human_feedback": feedback,
-            # 将内部 AI 审查的状态重置，因为现在是人类主导的重写逻辑
             "editor_comments": "HUMAN_OVERRIDE_TRIGGERED",
-            "messages": [override_msg]
+            "revision_history": new_history
         }
 
     elif status == "PASS_WITH_WARNING":

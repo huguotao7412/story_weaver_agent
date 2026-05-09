@@ -66,15 +66,12 @@ async def continuity_editor_node(state: dict) -> Dict[str, Any]:
 
         if review.status == "FAIL":
             print(f"❌ [Continuity-Editor] 质检未通过！发现问题：{review.bug_reports}")
-            feedback_msg = AIMessage(
-                content=f"【内部质检打回】\n扣分点: {review.bug_reports}\n修改建议: {review.revision_suggestions}",
-                name="Continuity_Editor",
-                id=str(uuid.uuid4())
-            )
+            new_history = state.get("revision_history", []) + [
+                f"【内审打回】扣分点: {review.bug_reports} | 建议: {review.revision_suggestions}"]
             return {
                 "editor_comments": "FAIL",
                 "internal_revision_count": revision_count + 1,
-                "messages": [feedback_msg]
+                "revision_history": new_history
             }
         else:
             print("✅ [Continuity-Editor] 质检完美通过！无越界与字数问题。")

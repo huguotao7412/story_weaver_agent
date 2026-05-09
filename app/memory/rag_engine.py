@@ -1,13 +1,69 @@
 # app/memory/rag_engine.py
 import os
+import math
 from typing import List, Dict, Any
+from collections import OrderedDict, Counter
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from app.core.config import settings
 from app.core.llm_factory import get_embeddings, rerank_documents
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from collections import OrderedDict
-from rank_bm25 import BM25Okapi
+
+
+class IncrementalBM25:
+    """🌟 工业级轻量优化：增量 BM25 检索引擎，插入时 O(1)，杜绝全量重算的 CPU 阻塞"""
+
+    def __init__(self, k1=1.5, b=0.75):
+        self.k1 = k1
+        self.b = b
+        self.N = 0
+        self.doc_freqs = Counter()
+        self.doc_lengths = []
+        self.total_length = 0
+        self.corpus_term_freqs = []
+        self.docs = []
+
+    def add_documents(self, docs):
+        """增量写入，只累加词频，不做全量矩阵重构"""
+        for doc in docs:
+            tokens = list(doc.page_content)  # 按照字符级切分
+            length = len(tokens)
+            self.docs.append(doc)
+            self.doc_lengths.append(length)
+            self.total_length += length
+            self.N += 1
+
+            term_freq = Counter(tokens)
+            self.corpus_term_freqs.append(term_freq)
+            for term in term_freq.keys():
+                self.doc_freqs[term] += 1
+
+    def get_top_n(self, query_tokens, n=5):
+        """即时计算 IDF 与 TF，返回高分文档"""
+        if self.N == 0: return []
+        avgdl = self.total_length / self.N
+        scores = []
+        for i in range(self.N):
+            score = 0
+            doc_len = self.doc_lengths[i]
+            term_freqs = self.corpus_term_freqs[i]
+            for q in query_tokens:
+                if q not in term_freqs: continue
+                # 动态计算 IDF
+                nq = self.doc_freqs.get(q, 0)
+                idf = math.log((self.N - nq + 0.5) / (nq + 0.5) + 1)
+                # 动态计算 TF
+                tf = term_freqs[q]
+                numerator = tf * (self.k1 + 1)
+                denominator = tf + self.k1 * (1 - self.b + self.b * (doc_len / avgdl))
+                score += idf * (numerator / denominator)
+            if score > 0:
+                scores.append((score, self.docs[i]))
+
+        scores.sort(key=lambda x: x[0], reverse=True)
+        return [doc for score, doc in scores[:n]]
+
 
 class ThreadSafeLRUCache:
     def __init__(self, capacity: int):
@@ -25,8 +81,10 @@ class ThreadSafeLRUCache:
         if len(self.cache) > self.capacity:
             self.cache.popitem(last=False)
 
+
 # 全局共享实例 (跨请求存活)
 GLOBAL_BM25_CACHE = ThreadSafeLRUCache(capacity=50)
+
 
 class RAGEngine:
     """
@@ -79,26 +137,35 @@ class RAGEngine:
             store.save_local(path)
 
     def _build_bm25_cache(self, store):
-        """🌟 核心优化：基于当前的 FAISS Store 在内存中静态构建 BM25 索引"""
+        """初始化全量构建 BM25 (仅在系统刚启动，读取历史数据时执行一次)"""
         if store is None:
             return None
         valid_docs = [d for d in store.docstore._dict.values() if d.metadata.get("type") != "placeholder"]
         if not valid_docs:
             return None
-        tokenized_corpus = [list(doc.page_content) for doc in valid_docs]
-        return {"bm25": BM25Okapi(tokenized_corpus), "docs": valid_docs}
+
+        bm25 = IncrementalBM25()
+        bm25.add_documents(valid_docs)
+        return bm25
 
     def _add_documents_to_store(self, store, path, documents, cache_key: str):
-        """🌟 核心优化：通用向量切片与插入逻辑（同步更新 BM25 缓存）"""
+        """🌟 核心优化：向量走 FAISS，BM25 走内存增量更新（毫无阻塞）"""
         split_docs = self.text_splitter.split_documents(documents)
+
+        # 1. 持久化更新 FAISS
         if store is None:
             store = FAISS.from_documents(split_docs, self.embeddings)
         else:
             store.add_documents(split_docs)
         self._save_store(store, path)
 
-        # 写入后立即刷新当前库的 BM25 缓存。检索时直接调缓存，实现 O(1) 检索
-        GLOBAL_BM25_CACHE.put(f"{self.book_id}_{cache_key}", self._build_bm25_cache(store))
+        # 2. 内存级别极速增量更新 BM25
+        bm25_obj = GLOBAL_BM25_CACHE.get(f"{self.book_id}_{cache_key}")
+        if bm25_obj is None:
+            bm25_obj = IncrementalBM25()
+            GLOBAL_BM25_CACHE.put(f"{self.book_id}_{cache_key}", bm25_obj)
+
+        bm25_obj.add_documents(split_docs)
         return store
 
     # ==========================================
@@ -146,8 +213,8 @@ class RAGEngine:
         )
         self.phase_store = FAISS.from_documents([dummy_doc], self.embeddings)
         self._save_store(self.phase_store, self.phase_dir)
-        # 🌟 重置时务必同步刷新缓存！
-        self.bm25_caches["phase"] = self._build_bm25_cache(self.phase_store)
+        # 🌟 同步刷新全局缓存，修复原版 self.bm25_caches 不存在的报错
+        GLOBAL_BM25_CACHE.put(f"{self.book_id}_phase", self._build_bm25_cache(self.phase_store))
         print("🧹 [RAG-Engine] 【单期细节库】已安全清空重建。")
 
     def reset_volume_store(self):
@@ -158,8 +225,8 @@ class RAGEngine:
         )
         self.volume_store = FAISS.from_documents([dummy_doc], self.embeddings)
         self._save_store(self.volume_store, self.volume_dir)
-        # 🌟 重置时务必同步刷新缓存！
-        self.bm25_caches["volume"] = self._build_bm25_cache(self.volume_store)
+        # 🌟 同步刷新全局缓存
+        GLOBAL_BM25_CACHE.put(f"{self.book_id}_volume", self._build_bm25_cache(self.volume_store))
         print("🧹 [RAG-Engine] 【分卷剧情库】已安全清空重建。")
 
     # ==========================================
@@ -187,12 +254,10 @@ class RAGEngine:
             faiss_docs = [d for d in faiss_docs if d.metadata.get("type") != "placeholder"]
 
             # == 通道二：BM25 缓存召回 (🚀 极大降低 CPU 开销) ==
-            bm25_data = GLOBAL_BM25_CACHE.get(f"{self.book_id}_{cache_key}")
-            if bm25_data and bm25_data['docs']:
-                bm25 = bm25_data['bm25']
-                bm25_valid_docs = bm25_data['docs']
+            bm25 = GLOBAL_BM25_CACHE.get(f"{self.book_id}_{cache_key}")
+            if bm25 and bm25.N > 0:
                 tokenized_query = list(query)
-                bm25_docs = bm25.get_top_n(tokenized_query, bm25_valid_docs, n=recall_k)
+                bm25_docs = bm25.get_top_n(tokenized_query, n=recall_k)
             else:
                 bm25_docs = []
 

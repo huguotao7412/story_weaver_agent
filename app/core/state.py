@@ -16,7 +16,8 @@ class TomatoNovelState(TypedDict):
 
 
     # 消息总线
-    messages: Annotated[List[BaseMessage], add_messages]
+    user_input: str  # 仅存放用户下达的初始脑洞/修改指令
+    revision_history: List[str]  # 显式打回与重写历史，仅在当前章循环内存活
 
     # === 1. 全局配置与静态知识库 (只读区) ===
     target_writing_style: dict

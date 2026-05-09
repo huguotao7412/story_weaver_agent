@@ -71,7 +71,7 @@ async def analyze_style_api(req: StyleRequest):
         if not text_to_analyze:
             raise HTTPException(status_code=400, detail="未提供任何参考文本或文件名")
 
-        state_mock = {"messages": [HumanMessage(content=text_to_analyze)]}
+        state_mock = {"user_input": text_to_analyze}
         result = await style_analyzer_node(state_mock)
 
         return {"status": "success", "style_guide": result.get("target_writing_style", {})}
@@ -115,7 +115,8 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
             if not current_state.next:
                 # 🌟 场景 A：这是本章的第一次运行
                 run_input = {
-                    "messages": [HumanMessage(content=req.user_input)],
+                    "user_input": req.user_input,
+                    "revision_history": [],
                     "current_chapter_num": req.chapter_num,
                     "book_id": req.thread_id
                 }

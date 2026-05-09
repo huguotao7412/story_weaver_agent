@@ -4,7 +4,8 @@ import asyncio
 from typing import Dict, Any, List, Literal
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage, AIMessage
+# 🌟 核心修改点 1：移除了 RemoveMessage 的导入，因为不再需要手动删消息了
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from app.core.llm_factory import get_llm
 from app.memory.kv_tracker import AsyncKVTracker
@@ -95,7 +96,8 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         with open(draft_path, "r", encoding="utf-8") as f:
             draft = f.read()
     chapter_num = state.get("current_chapter_num", 1)
-    messages = state.get("messages", [])
+
+    # 🌟 核心修改点 2：移除了 messages = state.get("messages", [])，因为不再需要读全局消息总线
     current_book_id = state.get("book_id", "default_book")
 
     if not draft:
@@ -107,6 +109,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
     power_rules = await tracker.get_power_system_rules()
     active_threads_snapshot = await tracker.get_active_threads_snapshot(current_map=current_map)
 
+    # 这里的 prompt_messages 只是发给 LLM 的本地变量，不影响全局图状态，保留即可
     prompt_messages = [
         SystemMessage(content=MEMORY_EXTRACTION_PROMPT.format(power_system_rules=power_rules)),
         HumanMessage(
@@ -150,7 +153,6 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             await tracker.add_unresolved_thread(mystery_dict, chapter_num)
             print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨 [{mystery_dict['priority']}]: {mystery_dict['content']}")
 
-        # 🌟 修复点：移除了 TinyDB 遗留的 tracker.threads_table.all() 语法，直接利用 aiosqlite 进行操作
         for resolved in memory_updates.resolved_mysteries:
             await tracker.remove_resolved_thread(resolved.thread_id)
             print(f"   [✨ 填坑完成] 尝试解决伏笔 [ID: {resolved.thread_id}]。原因: {resolved.reason}")
@@ -169,15 +171,8 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         except Exception as e:
             pass
 
-        delete_messages = []
-        if len(messages) > 2:
-            # 留下最后两条用于下一轮的启动参考，之前的全部彻底超度
-            for msg in messages[:-2]:
-                msg_id = getattr(msg, "id", None)
-                if msg_id:
-                    delete_messages.append(RemoveMessage(id=msg_id))
-                else:
-                    print(f"⚠️ [Memory-Keeper] 警告：发现无 ID 消息，已被遗漏：{msg}")
+        # 🌟 核心修改点 3：删除了冗长且容易报错的 delete_messages 循环逻辑
+        # (即删除了 for msg in messages[:-2]: ... 这一段)
 
         prev_ending = draft[-500:] if len(draft) > 500 else draft
 
@@ -186,14 +181,12 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         # ==========================================
         print("📝 [Memory-Keeper] 正在生成本章 200 字核心摘要...")
 
-        # 1. 安全提取系统中保留的“旧摘要”
         old_summary = state.get("recent_chapters_summary", [])
         if not isinstance(old_summary, list):
             old_summary = []
 
-        # 2. 调用小模型生成“本章”摘要
         summary_prompt = f"请将以下这章网文正文压缩为200字的核心剧情摘要。只保留最关键的动作、结果和结尾的悬念，去掉废话和景色描写：\n{draft}"
-        fast_llm = get_llm(model_type="main", temperature=0.1)  # 推荐使用便宜且速度快的小模型
+        fast_llm = get_llm(model_type="main", temperature=0.1)
 
         try:
             summary_msg = await fast_llm.ainvoke([HumanMessage(content=summary_prompt)])
@@ -206,12 +199,13 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         old_summary.append(f"第 {chapter_num} 章: {current_summary_text}")
         rolling_summary = old_summary[-2:]  # 永远只保留最近两章
 
+        # 🌟 核心修改点 4：彻底改变返回字典的结构
         return {
             "human_approval_status": "PENDING",
             "human_feedback": "",
             "previous_chapter_ending": prev_ending,
-            "recent_chapters_summary": rolling_summary,  # 🌟 写入拼装好的双章滚动摘要
-            "messages": delete_messages,
+            "recent_chapters_summary": rolling_summary,
+            "revision_history": [],  # ✨ 这里是关键：本章定稿入库，强制将状态机里的打回历史清空，零负荷进入下一章！
             "current_beat_sheet": "",
             "draft_path": ""
         }

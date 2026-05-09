@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from app.core.llm_factory import get_llm
-from app.memory.kv_tracker import  AsyncKVTracker
+from app.memory.kv_tracker import AsyncKVTracker
 from app.memory.rag_engine import RAGEngine
 
 from protocols.a2a_schemas import BookOutline, VolumePhases, PhaseChapters, ChapterOutline
@@ -222,7 +222,9 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
 
     print(f"📚 [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...")
     llm = get_llm(model_type="main", temperature=0.3)
-    user_input = state.get("messages", [HumanMessage(content="请按网文套路推进")])[-1].content
+
+    # 🌟 核心修改点：直接从 state 里拿 user_input，而不是去 messages 里翻找
+    user_input = state.get("user_input", "请按网文套路推进")
 
     world_bible_preset = state.get("world_bible_context", "")
 
@@ -248,12 +250,13 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
         book_json = json.dumps(book_result.model_dump(), ensure_ascii=False, indent=2)
 
         tracker = AsyncKVTracker(book_id=current_book_id)
-        await tracker.init_db()  # 🌟 必须 await 初始化
-        await tracker.set_power_system_rules(book_result.power_system_rules)  # 🌟 必须 await 写入
+        await tracker.init_db()
+        await tracker.set_power_system_rules(book_result.power_system_rules)
 
         try:
             rag_engine = RAGEngine(book_id=current_book_id)
-            await asyncio.to_thread(rag_engine.insert_world_bible, [{"title": "全书世界观与总纲", "content": book_json}])
+            await asyncio.to_thread(rag_engine.insert_world_bible,
+                                    [{"title": "全书世界观与总纲", "content": book_json}])
             print("✅ [Book-Planner] 《全书总纲》已成功灌入全局 RAG 向量空间。")
         except Exception as e:
             print(f"⚠️ [Book-Planner] RAG 持久化异常: {e}")
@@ -375,18 +378,14 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     current_book_id = state.get("book_id", "default_book")
     print(f"📍 [Chapter-Planner] 正在严格对齐本期十章梗概，拆解第 {current_chapter_num} 章节拍器...")
 
-    # 🌟 提取人类总编在前端 UI 刚刚下达的最新剧情指令
-    messages = state.get("messages", [])
-    latest_user_instruction = ""
-    for msg in reversed(messages):
-        # 避开 Continuity-Editor 或者其他系统注入的打回 Message
-        if isinstance(msg, HumanMessage) and getattr(msg, "name", "") != "Human_Editor":
-            latest_user_instruction = msg.content
-            break
+    # 🌟 核心修改点：彻底删除了那个容易报错的 `for msg in reversed(messages):` 循环
+    # 直接提取人类总编在前端 UI 下达的最新剧情指令
+    latest_user_instruction = state.get("user_input", "")
 
     # 组装高优先级覆写文本
     human_override_instruction = ""
-    if latest_user_instruction and latest_user_instruction.strip() and latest_user_instruction.strip() not in ["请按网文套路推进", ""]:
+    if latest_user_instruction and latest_user_instruction.strip() and latest_user_instruction.strip() not in [
+        "请按网文套路推进", ""]:
         human_override_instruction = (
             f"🔥【人类上帝指令 (God Command Override)】🔥\n"
             f"人类总编刚刚下达了本章的特定诉求：\n《{latest_user_instruction}》\n"
@@ -433,9 +432,10 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
             rag_plan: RAGQueryPlan = await rewriter_llm.ainvoke([HumanMessage(content=rewriter_prompt)])
             query_str = rag_plan.optimized_query
 
-            print(f"   [🔍 RAG 智能路由] 关键词: {rag_plan.optimized_query} | K值分配: Global={rag_plan.k_global}, Volume={rag_plan.k_volume}, Phase={rag_plan.k_phase}")
+            print(
+                f"   [🔍 RAG 智能路由] 关键词: {rag_plan.optimized_query} | K值分配: Global={rag_plan.k_global}, Volume={rag_plan.k_volume}, Phase={rag_plan.k_phase}")
 
-            # 2. 🌟 执行异步 FAISS 检索 (解决 P0 问题二)
+            # 2. 🌟 执行异步 FAISS 检索
             rag_engine = RAGEngine(book_id=current_book_id)
             history_context = await asyncio.to_thread(
                 rag_engine.retrieve_context,
@@ -456,13 +456,13 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
                 k_phase=2
             )
 
-        # 3. 🌟 执行 On-Demand 按需召回快照 (解决 P2 问题二)
-        # 将 RAG Router 提取的关键词传入，过滤掉无关配角，极大缩减上下文
+        # 3. 🌟 执行 On-Demand 按需召回快照
         filter_keywords = query_str.split() if query_str else []
         current_kv_state = await tracker.get_world_bible_snapshot(filter_entities=filter_keywords)
 
         # 获取未解决伏笔池
-        unresolved_threads = await tracker.get_active_threads_snapshot(current_map=current_map, query_keywords=query_str)
+        unresolved_threads = await tracker.get_active_threads_snapshot(current_map=current_map,
+                                                                       query_keywords=query_str)
         current_kv_state += f"\n\n{unresolved_threads}"
 
     except Exception as e:
@@ -484,9 +484,10 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
         climax_rule = "   - 【结算/余波期】核心是展现高潮过后的【满足感】和清点战利品的暗爽，无需战斗。"
         cliffhanger_rule = "   - 【满足钩子】高潮已过，绝对禁止在结尾引出新敌人！结尾必须是战利品清点完毕后的笑容、众人对主角的惊叹，或遥望新目标的憧憬。"
 
-    # 🌟 修复队列读取：使用 recent_chapter_summaries (解决 P1 问题二)
-    summary_list = state.get("recent_chapter_summaries", [])
-    recent_chapters_summary = "\n\n".join([f"【N-{len(summary_list) - i} 前情脉络】:\n{text}" for i, text in enumerate(summary_list)]) if summary_list else "（暂无前情提要）"
+    # 🌟 修复队列读取：使用 recent_chapter_summaries
+    summary_list = state.get("recent_chapters_summary", [])
+    recent_chapters_summary = "\n\n".join([f"【N-{len(summary_list) - i} 前情脉络】:\n{text}" for i, text in
+                                           enumerate(summary_list)]) if summary_list else "（暂无前情提要）"
 
     # 注入系统级 Prompt
     sys_prompt = LAYER4_CHAPTER_PROMPT.format(
@@ -508,7 +509,8 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
 
     prompt_messages = [
         SystemMessage(content=sys_prompt),
-        HumanMessage(content=f"请生成第 {current_chapter_num} 章节拍器。如果剧情合适，请优先从【未解伏笔/悬念/仇恨池】中挑选 1-2 个进行推进或彻底解决（填坑）。")
+        HumanMessage(
+            content=f"请生成第 {current_chapter_num} 章节拍器。如果剧情合适，请优先从【未解伏笔/悬念/仇恨池】中挑选 1-2 个进行推进或彻底解决（填坑）。")
     ]
 
     max_retries = 3
@@ -525,7 +527,6 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
         except Exception as e:
             print(f"⚠️ [Chapter-Planner] 第 {attempt + 1} 次生成大纲格式异常: {e}")
             if attempt < max_retries - 1:
-                # 喂给大模型报错信息，强制补充
                 prompt_messages.append(AIMessage(content="你的输出格式有误，导致 JSON 解析失败。"))
                 prompt_messages.append(HumanMessage(
                     content=f"这是系统的报错信息：\n{str(e)}\n\n⚠️ 警告：请仔细检查你的输出！必须确保 `beats` 数组中的【每一个节拍对象】都包含 `plot_summary` 等所有必填字段！不要省略！请重新输出完整的 JSON。"

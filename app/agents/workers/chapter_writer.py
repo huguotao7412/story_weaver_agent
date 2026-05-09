@@ -59,8 +59,11 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     history_context = state.get("rag_history_context", "暂无历史剧情。")
     current_chapter_num = state.get("current_chapter_num", 1)
     prev_ending = state.get("previous_chapter_ending", "")
-    messages_history = state.get("messages", [])
     current_book_id = state.get("book_id", "default_book")
+
+    # 🌟 核心修改点 1：彻底抛弃 messages_history，改用轻量级的 revision_history 字符串列表
+    revision_history = state.get("revision_history", [])
+    history_text = "\n".join(revision_history) if revision_history else "无打回记录"
 
     # 🌟 获取上文摘要
     summary_list = state.get("recent_chapters_summary", [])
@@ -75,7 +78,6 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     if isinstance(target_style_obj, dict) and "novel_specific" in target_style_obj:
         rules = target_style_obj["novel_specific"].get("rules", {})
         style_guide = rules.get("compiled_prompt", str(rules))
-        # 提取 Few-shot 范文
         examples = rules.get("example_snippets", [])
         if isinstance(examples, list) and examples:
             examples_str = "\n".join([f"示例片段 {i + 1}:\n{ex}" for i, ex in enumerate(examples)])
@@ -120,7 +122,8 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     editor_comments = state.get("editor_comments", "")
 
     llm = get_llm(model_type="main", temperature=0.7)
-    recent_history = messages_history[-5:] if len(messages_history) > 5 else messages_history
+
+    # 🌟 核心修改点 2：删除了 recent_history = messages_history[-5:] 的逻辑
     is_rewrite = (human_status == "REJECTED" or editor_comments == "FAIL")
 
     new_draft = ""
@@ -132,24 +135,22 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
             instruction = (
                 f"【🔥 最高指令：人类总编打回重写】\n"
                 f"人类总编严厉批注：{human_feedback}\n"
+                f"以下是本章经历的历史打回记录与建议（请避开同样的错误）：\n{history_text}\n\n"
                 f"你的原稿如下：\n{current_draft}\n\n"
                 f"任务：请仔细揣摩总编意图，抛弃原稿不合理部分，结合大纲彻底重写本章正文。务必让总编满意！"
             )
         else:
-            last_editor_msg = ""
-            for msg in reversed(messages_history):
-                if getattr(msg, "name", "") == "Continuity_Editor":
-                    last_editor_msg = msg.content
-                    break
+            # 🌟 核心修改点 3：不再去 messages 数组里遍历找内审记录，直接使用纯文本 history_text
             print(f"✍️ [Chapter-Writer] 收到内审打回指令，正在疯狂填补细节注水...")
             instruction = (
                 f"【⚠️ 内部质检打回重写】\n"
-                f"以下是主编(内审组)的打回意见：\n{last_editor_msg}\n\n"
+                f"以下是主编(内审组)的打回意见栈：\n{history_text}\n\n"
                 f"你的原稿如下：\n{current_draft}\n\n"
                 f"任务：仔细阅读内审意见！绝对禁止往后推时间线抢跑！如果字数不够，请在节拍器要求的高权重画面疯狂加环境白描与心理戏！彻底重写。"
             )
 
-        formatted_messages = [SystemMessage(content=sys_prompt)] + recent_history + [HumanMessage(content=instruction)]
+        # 🌟 核心修改点 4：构建消息时，不再拼接杂乱的历史消息列表，只有纯粹的 System 和 Human 两个 Message
+        formatted_messages = [SystemMessage(content=sys_prompt), HumanMessage(content=instruction)]
         async for chunk in llm.astream(formatted_messages, config=config):
             new_draft += chunk.content
 
@@ -170,11 +171,10 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
             part1_outline = json.dumps({"beats": part1_beats}, ensure_ascii=False, indent=2)
             part2_outline = json.dumps({"beats": part2_beats}, ensure_ascii=False, indent=2)
 
-            # 动态计算上下半篇权重
             def calc_target_words(beats_list, total_words=settings.MAX_WORDS_PER_CHAPTER):
                 try:
                     weight_sum = sum([float(str(b.get("word_count_weight", "0")).replace("%", "")) for b in beats_list])
-                    return max(int((weight_sum / 100) * total_words), 500)  # 兜底最少500字
+                    return max(int((weight_sum / 100) * total_words), 500)
                 except:
                     return 1500
 
@@ -189,19 +189,18 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
                 f"任务：请严格按照这部分大纲，生成上半篇的正文。目标字数 {target_words_p1} 字左右。\n"
                 f"🚨 绝对红线：严禁越界写出大纲未提及的后续剧情！多运用冰山理论写细节！"
             )
-            messages_p1 = [SystemMessage(content=sys_prompt)] + recent_history + [HumanMessage(content=instr_part1)]
+            # 🌟 核心修改点 5：剔除 recent_history 拼接
+            messages_p1 = [SystemMessage(content=sys_prompt), HumanMessage(content=instr_part1)]
 
             part1_draft = ""
             async for chunk in llm.astream(messages_p1, config=config):
                 part1_draft += chunk.content
-                # ❌ 已删除这里的 yield chunk，依赖 LangChain 回调自动推流
 
             # --- 第 2 次调用：生成下半篇 ---
             print(f"   [Chunk 2] 正在生成下半篇 (目标字数: ~{target_words_p2}字)...")
             sys_prompt_part2 = WRITER_SYSTEM_PROMPT.format(
                 recent_chapters_summary=recent_chapters_summary,
                 scene_hook_prompt="（这是本章的下半篇，请直接紧接上方【上半篇前文参考】的最后一个动作继续写，绝不要另起炉灶！）",
-                # 替换锚点
                 world_bible=world_bible,
                 history_context=history_context,
                 style_guide=style_guide,
@@ -215,42 +214,36 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
                 f"任务：紧接上半篇的情绪和动作，完成下半篇的正文。目标字数 {target_words_p2} 字左右。\n"
                 f"🚨 绝对红线：严禁重复上半篇已经写过的剧情！严厉执行结尾钩子规则！"
             )
-            messages_p2 = [SystemMessage(content=sys_prompt_part2)] + recent_history + [HumanMessage(content=instr_part2)]
+            # 🌟 核心修改点 5：剔除 recent_history 拼接
+            messages_p2 = [SystemMessage(content=sys_prompt_part2), HumanMessage(content=instr_part2)]
 
             part2_draft = "\n\n"
             async for chunk in llm.astream(messages_p2, config=config):
                 part2_draft += chunk.content
-                # ❌ 已删除这里的 yield chunk，依赖 LangChain 回调自动推流
 
             new_draft = part1_draft + part2_draft
 
         else:
-            # 兜底：如果节拍太少或解析失败，单次生成
+            # 兜底：单次生成
             instruction = (
                 f"【首次生成指令】\n"
                 f"这是本章的大纲：\n{current_beat_sheet}\n"
                 f"任务：请严格按照大纲给定的情节走向和爽点要求生成初稿，目标 2000 字左右。"
             )
-            formatted_messages = [SystemMessage(content=sys_prompt)] + recent_history + [
-                HumanMessage(content=instruction)]
+            # 🌟 核心修改点 5：剔除 recent_history 拼接
+            formatted_messages = [SystemMessage(content=sys_prompt), HumanMessage(content=instruction)]
             async for chunk in llm.astream(formatted_messages, config=config):
                 new_draft += chunk.content
 
     # === 8. 保存与返回 ===
-    action_message = AIMessage(
-        content=f"[Chapter-Writer] 第 {current_chapter_num} 章正文草稿已生成，字数：{len(new_draft)}。",
-        name="Chapter_Writer",
-        id=str(uuid.uuid4())
-    )
-
+    # 🌟 核心修改点 6：彻底移除生成 AIMessage 以及返回 "messages" 的逻辑
     print(f"✅ [Chapter-Writer] 码字完毕，总字数：{len(new_draft)}")
     draft_path = os.path.join(settings.DATA_DIR, current_book_id, f"temp_draft_{current_chapter_num}.txt")
     with open(draft_path, "w", encoding="utf-8") as f:
         f.write(new_draft)
 
-    # ✅ 节点正常返回字典状态
+    # 仅仅返回纯状态，不再向状态机注入导致膨胀的 Message 对象
     return {
         "draft_path": draft_path,
-        "human_approval_status": "PENDING",
-        "messages": [action_message]
+        "human_approval_status": "PENDING"
     }

@@ -22,14 +22,9 @@ async def style_analyzer_node(state: dict) -> Dict[str, Any]:
     🎭 Style-Analyzer (文风解构师)
     提取参考片段的文风，并持久化到 target_writing_style 共享状态中。
     """
-    messages = state.get("messages", [])
 
-    # 寻找用户最新上传的参考文本
-    reference_text = ""
-    for m in reversed(messages):
-        if isinstance(m, HumanMessage):
-            reference_text = m.content
-            break
+    # 🌟 核心修改点：不需要再写循环去 messages 里找了，直接从 state 获取文本
+    reference_text = state.get("user_input", "")
 
     # 如果没有找到参考文本，则跳过提取（或者返回默认文风）
     if not reference_text:
@@ -38,7 +33,7 @@ async def style_analyzer_node(state: dict) -> Dict[str, Any]:
     # 实例化 LLM
     llm = get_llm(model_type="main", temperature=0.1)
 
-    # 🌟 核心修改：绑定 Pydantic Schema 进行结构化输出
+    # 绑定 Pydantic Schema 进行结构化输出
     structured_llm = llm.with_structured_output(StyleGuide, method="function_calling")
 
     # 组装 Prompt
