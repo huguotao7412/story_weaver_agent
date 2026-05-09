@@ -6,6 +6,7 @@ from collections import OrderedDict, Counter
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import threading
 
 from app.core.config import settings
 from app.core.llm_factory import get_embeddings, rerank_documents
@@ -69,17 +70,20 @@ class ThreadSafeLRUCache:
     def __init__(self, capacity: int):
         self.cache = OrderedDict()
         self.capacity = capacity
+        self.lock = threading.Lock()
 
     def get(self, key: str):
-        if key not in self.cache: return None
-        self.cache.move_to_end(key)
-        return self.cache[key]
+        with self.lock:
+           if key not in self.cache: return None
+           self.cache.move_to_end(key)
+           return self.cache[key]
 
     def put(self, key: str, value):
-        self.cache[key] = value
-        self.cache.move_to_end(key)
-        if len(self.cache) > self.capacity:
-            self.cache.popitem(last=False)
+        with self.lock:
+           self.cache[key] = value
+           self.cache.move_to_end(key)
+           if len(self.cache) > self.capacity:
+              self.cache.popitem(last=False)
 
 
 # 全局共享实例 (跨请求存活)
@@ -291,6 +295,8 @@ class RAGEngine:
 
         except Exception as e:
             print(f"⚠️ [RAG-Engine] 检索/重排构建失败，平滑降级: {e}")
+            if 'candidate_docs' in locals() and candidate_docs:
+                return candidate_docs[:k]
             return store.similarity_search(
                 query,
                 k=k,

@@ -277,7 +277,8 @@ def send_feedback(target_node, approval_status="APPROVED", beat_sheet="", feedba
     if res.status_code == 200:
         if target_node == "Chapter_Writer" or approval_status == "REJECTED":
             st.session_state.draft_content = ""
-            start_generation_stream("", st.session_state.current_chapter_num)
+            st.session_state.app_stage = "RUNNING"
+            st.session_state.plot_prompt_input = ""
         else:
             st.session_state.update({
                 "app_stage": "IDLE",
@@ -343,6 +344,9 @@ if st.session_state.app_stage == "IDLE":
                 st.session_state.current_chapter_num = chapter_input
                 start_generation_stream(st.session_state.plot_prompt_input, chapter_input)
                 st.rerun()
+
+if st.session_state.app_stage == "RUNNING" and not st.session_state.plot_prompt_input:
+    start_generation_stream("", st.session_state.current_chapter_num)
 
 # 核心内容区 (Tabs)
 tab_beat, tab_draft = st.tabs(["🗺️ 章节大纲 (Beat Sheet)", "✍️ 正文工作区"])
