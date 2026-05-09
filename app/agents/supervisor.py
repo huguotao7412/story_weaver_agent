@@ -36,6 +36,9 @@ def human_review_node(state: dict) -> Dict[str, Any]:
     # 🌟 获取草稿存储路径
     draft_path = state.get("draft_path", "")
 
+    # 🌟 精确修复 3：单独获取内审状态，以便正确捕获 "PASS_WITH_WARNING"
+    editor_status = state.get("editor_comments", "")
+
     if direct_edits and direct_edits.strip() != "":
         print("👑 [Supervisor] 检测到总编的手动批改文本，正在强行覆盖原系统本地草稿...")
         # 🌟 状态瘦身优化：直接覆盖写入本地文件，而不是塞进状态机字典里
@@ -46,7 +49,7 @@ def human_review_node(state: dict) -> Dict[str, Any]:
 
     # 1. 人类直接批准入库
     if status == "APPROVED":
-        msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor",id=str(uuid.uuid4()))
+        msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor", id=str(uuid.uuid4()))
         print(f"✅ [Supervisor] 总编已批准第 {chapter_num} 章定稿！流转至 Memory-Keeper。")
         return {
             "human_approval_status": "APPROVED",
@@ -69,8 +72,12 @@ def human_review_node(state: dict) -> Dict[str, Any]:
             "revision_history": new_history
         }
 
-    elif status == "PASS_WITH_WARNING":
+    # 🌟 精确修复 4：使用 editor_status 来判断内审的放行信号，而不是 status
+    elif editor_status == "PASS_WITH_WARNING" and status == "PENDING":
         print("⚠️ [Supervisor] 接收到内审组的强行放行信号，等待总编最终裁定。")
+        return {
+            "human_approval_status": "PENDING"
+        }
 
     # 3. 异常状态兜底（比如没有经过 UI 交互直接触发了）
     else:

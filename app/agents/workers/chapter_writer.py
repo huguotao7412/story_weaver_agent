@@ -55,11 +55,17 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     # === 1. 从状态机提取基础参数 ===
     world_bible = state.get("world_bible_context", "暂无宏观世界观。")
     current_beat_sheet = state.get("current_beat_sheet", "暂无大纲。")
-    current_draft = state.get("draft_content", "")
     history_context = state.get("rag_history_context", "暂无历史剧情。")
     current_chapter_num = state.get("current_chapter_num", 1)
     prev_ending = state.get("previous_chapter_ending", "")
     current_book_id = state.get("book_id", "default_book")
+
+    # 🌟 精确修复 1：通过物理路径读取真实草稿内容，解决重写时看不到原稿的 Bug
+    draft_path = state.get("draft_path", "")
+    current_draft = ""
+    if draft_path and os.path.exists(draft_path):
+        with open(draft_path, "r", encoding="utf-8") as f:
+            current_draft = f.read()
 
     # 🌟 核心修改点 1：彻底抛弃 messages_history，改用轻量级的 revision_history 字符串列表
     revision_history = state.get("revision_history", [])
@@ -239,10 +245,12 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     # 🌟 核心修改点 6：彻底移除生成 AIMessage 以及返回 "messages" 的逻辑
     print(f"✅ [Chapter-Writer] 码字完毕，总字数：{len(new_draft)}")
     draft_path = os.path.join(settings.DATA_DIR, current_book_id, f"temp_draft_{current_chapter_num}.txt")
+
+    # 🌟 精确修复 2：必须先建立文件夹目录，才能执行打开和写入！防止抛出 FileNotFoundError
+    os.makedirs(os.path.dirname(draft_path), exist_ok=True)
+
     with open(draft_path, "w", encoding="utf-8") as f:
         f.write(new_draft)
-
-    os.makedirs(os.path.dirname(draft_path), exist_ok=True)
 
     # 仅仅返回纯状态，不再向状态机注入导致膨胀的 Message 对象
     return {
