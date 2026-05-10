@@ -204,7 +204,7 @@ def get_focused_phase_chapters(phase_chapters_json: str, current_chapter_num: in
 
         focused_summaries = []
         for i, chapter in enumerate(summaries):
-            if i == current_idx - 1:
+            if current_idx > 0 and i == current_idx - 1:
                 chapter["_system_note"] = "【上一章已发生剧情】请确保本章的第一个节拍与此无缝接续。"
                 focused_summaries.append(chapter)
             elif i == current_idx:
@@ -240,7 +240,7 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
         return {"is_book_initialized": True}
 
     print(f"📚 [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...")
-    llm = get_llm(model_type="main", temperature=0.3)
+    llm = get_llm(temperature=0.3)
 
     user_input = state.get("user_input", "请按网文套路推进")
     world_bible_preset = state.get("world_bible_context", "")
@@ -310,7 +310,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
 
     print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在提取底层状态进行软修正...")
 
-    llm = get_llm(model_type="main", temperature=0.3)
+    llm = get_llm(temperature=0.3)
     book_outline = state.get("book_outline_context", "暂无总纲")
 
     # 🌟 获取最新快照与宏观前情回顾
@@ -382,7 +382,7 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
 
     print(f"📑 [Phase-Planner] 触发跨期推演！当前进入【{current_phase_name}】，正在提取本卷真实剧情碎片...")
 
-    llm = get_llm(model_type="main", temperature=0.2)
+    llm = get_llm(temperature=0.2)
     world_bible = state.get("world_bible_context", "")
 
     raw_volume_phases = state.get("current_volume_phases", "")
@@ -467,7 +467,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
             f"====================================================\n"
         )
 
-    llm = get_llm(model_type="main", temperature=0.2)
+    llm = get_llm(temperature=0.2)
     world_bible = state.get("world_bible_context", "")
     phase_chapters = state.get("current_phase_chapters", "")
 
@@ -493,8 +493,8 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
 
         try:
             # 1. 优先执行 RAG Router 获取本章的实体关键词
-            fast_llm = get_llm(model_type="main", temperature=0.1)
-            rewriter_llm = fast_llm.with_structured_output(RAGQueryPlan, method="function_calling")
+            rag_router_llm = get_llm(temperature=0.1)
+            rewriter_llm = rag_router_llm.with_structured_output(RAGQueryPlan, method="function_calling")
 
             rewriter_prompt = (
                 f"你是一个RAG检索路由专家。当前准备写第 {current_chapter_num} 章。\n"

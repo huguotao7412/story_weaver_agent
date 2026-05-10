@@ -31,7 +31,7 @@ async def style_analyzer_node(state: dict) -> Dict[str, Any]:
         return {}
 
     # 实例化 LLM
-    llm = get_llm(model_type="main", temperature=0.1)
+    llm = get_llm(temperature=0.1)
 
     # 绑定 Pydantic Schema 进行结构化输出
     structured_llm = llm.with_structured_output(StyleGuide, method="function_calling")

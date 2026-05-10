@@ -7,6 +7,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import threading
+import jieba
 
 from app.core.config import settings
 from app.core.llm_factory import get_embeddings, rerank_documents
@@ -28,7 +29,7 @@ class IncrementalBM25:
     def add_documents(self, docs):
         """增量写入，只累加词频，不做全量矩阵重构"""
         for doc in docs:
-            tokens = list(doc.page_content)  # 按照字符级切分
+            tokens = list(jieba.cut(doc.page_content))  # 中文分词，词级别切分
             length = len(tokens)
             self.docs.append(doc)
             self.doc_lengths.append(length)
@@ -185,13 +186,14 @@ class RAGEngine:
             store.add_documents(split_docs)
         self._save_store(store, path)
 
-        # 2. 内存级别极速增量更新 BM25
-        bm25_obj = GLOBAL_BM25_CACHE.get(f"{self.book_id}_{cache_key}")
-        if bm25_obj is None:
-            bm25_obj = IncrementalBM25()
-            GLOBAL_BM25_CACHE.put(f"{self.book_id}_{cache_key}", bm25_obj)
-
-        bm25_obj.add_documents(split_docs)
+        # 2. 内存级别极速增量更新 BM25（加锁保护，防止竞态导致文档丢失）
+        bm25_cache_key = f"{self.book_id}_{cache_key}"
+        with GLOBAL_BM25_CACHE.lock:
+            bm25_obj = GLOBAL_BM25_CACHE.cache.get(bm25_cache_key)
+            if bm25_obj is None:
+                bm25_obj = IncrementalBM25()
+                GLOBAL_BM25_CACHE.cache[bm25_cache_key] = bm25_obj
+            bm25_obj.add_documents(split_docs)
         return store
 
     # ==========================================
@@ -285,7 +287,7 @@ class RAGEngine:
             # == 通道二：BM25 缓存召回 (🚀 极大降低 CPU 开销) ==
             bm25 = GLOBAL_BM25_CACHE.get(f"{self.book_id}_{cache_key}")
             if bm25 and bm25.N > 0:
-                tokenized_query = list(query)
+                tokenized_query = list(jieba.cut(query))
                 bm25_docs = bm25.get_top_n(tokenized_query, n=recall_k)
             else:
                 bm25_docs = []

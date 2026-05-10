@@ -2,7 +2,6 @@
 import os
 import json
 import re
-import uuid
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.core.config import settings
@@ -129,7 +128,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
     human_feedback = state.get("human_feedback", "")
     editor_comments = state.get("editor_comments", "")
 
-    llm = get_llm(model_type="main", temperature=0.7)
+    llm = get_llm(temperature=0.7)
 
     # 🌟 核心修改点 2：删除了 recent_history = messages_history[-5:] 的逻辑
     is_rewrite = (human_status == "REJECTED" or editor_comments == "FAIL")
@@ -227,7 +226,7 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
             # 🌟 核心修改点 5：剔除 recent_history 拼接
             messages_p2 = [SystemMessage(content=sys_prompt_part2), HumanMessage(content=instr_part2)]
 
-            part2_draft = "\n\n"
+            part2_draft = ""
             async for chunk in llm.astream(messages_p2, config=config):
                 part2_draft += chunk.content
 

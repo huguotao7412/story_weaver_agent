@@ -1,7 +1,5 @@
 # app/agents/workers/continuity_editor.py
 import os
-import uuid
-import json
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from app.memory.kv_tracker import AsyncKVTracker
@@ -26,7 +24,7 @@ EDITOR_SYSTEM_PROMPT = """你是一个冷酷无情的网文【内部质检编辑
 """
 
 async def continuity_editor_node(state: dict) -> Dict[str, Any]:
-    tracker = AsyncKVTracker(book_id=state.get("book_id"))
+    tracker = AsyncKVTracker(book_id=state.get("book_id", "default_book"))
     await tracker.init_db()
     current_kv_state = await tracker.get_world_bible_snapshot()
     draft_path = state.get("draft_path", "")
@@ -51,7 +49,7 @@ async def continuity_editor_node(state: dict) -> Dict[str, Any]:
             "internal_revision_count": 0
         }
 
-    llm = get_llm(model_type="main", temperature=0.1) # 质检节点温度调低，确保理性
+    llm = get_llm(temperature=0.1) # 质检节点温度调低，确保理性
     structured_llm = llm.with_structured_output(EditorInternalReview, method="function_calling")
 
     prompt = EDITOR_SYSTEM_PROMPT.format(kv_state=current_kv_state,

@@ -8,25 +8,17 @@ from typing import List
 # 确保在实例化前加载 .env 文件中的环境变量
 load_dotenv()
 
-def get_llm(model_type: str = "main", temperature: float = None) -> ChatOpenAI:
+def get_llm(temperature: float = None) -> ChatOpenAI:
     """
     统一的大语言模型 (LLM) 工厂函数
     """
-    if model_type == "fast":
-        api_key = os.getenv("FAST_LLM_API_KEY")
-        base_url = os.getenv("FAST_LLM_BASE_URL", "https://api.deepseek.com/v1")
-        model_name = os.getenv("FAST_LLM_MODEL_NAME", "deepseek-v4-flash")
-        default_temp = 0.2
-    elif model_type == "main":
-        api_key = os.getenv("MAIN_LLM_API_KEY")
-        base_url = os.getenv("MAIN_LLM_BASE_URL", "https://api.deepseek.com/v1")
-        model_name = os.getenv("MAIN_LLM_MODEL_NAME", "deepseek-v4-flash")
-        default_temp = 0.4
-    else:
-        raise ValueError(f"未知的 model_type: {model_type}")
+    api_key = os.getenv("MAIN_LLM_API_KEY")
+    base_url = os.getenv("MAIN_LLM_BASE_URL", "https://api.deepseek.com/v1")
+    model_name = os.getenv("MAIN_LLM_MODEL_NAME", "deepseek-chat")
+    default_temp = 0.4
 
     if not api_key:
-        raise ValueError(f"【环境配置错误】缺少 {model_type} 模型的 API KEY，请检查 .env 文件。")
+        raise ValueError("【环境配置错误】缺少 MAIN_LLM_API_KEY，请检查 .env 文件。")
 
     final_temp = temperature if temperature is not None else default_temp
 
@@ -71,7 +63,7 @@ def rerank_documents(query: str, documents: List[str], top_n: int = 3) -> List[i
     rerank_url = "https://api.siliconflow.cn/v1/rerank"
 
     if not api_key:
-        print("⚠️ [Rerank] 缺少 EMBEDDING_API_KEY，降级为原顺序返回")
+        print("⚠️ [Rerank] 缺少 RERANK_API_KEY，降级为原顺序返回")
         return list(range(min(top_n, len(documents))))
 
     headers = {

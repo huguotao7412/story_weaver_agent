@@ -234,8 +234,12 @@ async def receive_human_feedback(req: FeedbackRequest, request: Request, backgro
 
             if req.approval_status == "APPROVED":
                 async def run_memory_keeper():
-                    async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
-                        pass
+                    try:
+                        async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
+                            pass
+                    except Exception as e:
+                        print(f"❌ [Background] Memory_Keeper 后台执行失败: {e}")
+                        traceback.print_exc()
                 background_tasks.add_task(run_memory_keeper)
                 return {"status": "success", "message": "正文已入库，后台正在提取记忆与生成摘要...", "approval": req.approval_status}
             else:
@@ -293,14 +297,33 @@ async def delete_book(book_id: str):
 
 @router.delete("/books/{book_id}/chapters/{chapter_num}")
 async def reset_chapter_state(book_id: str, chapter_num: int):
-    """清除当前章节的 LangGraph Checkpoint，实现重置"""
+    """清除当前章节的 LangGraph Checkpoint 及相关文件，实现完整重置"""
     graph_thread_id = f"{book_id}_chap_{chapter_num}"
     try:
+        # 1. 清理 LangGraph checkpoint 数据
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (graph_thread_id,))
             await db.execute("DELETE FROM checkpoint_writes WHERE thread_id = ?", (graph_thread_id,))
             await db.execute("DELETE FROM checkpoint_blobs WHERE thread_id = ?", (graph_thread_id,))
             await db.commit()
+
+        # 2. 清理草稿文件
+        draft_path = os.path.join(settings.DATA_DIR, book_id, f"temp_draft_{chapter_num}.txt")
+        if os.path.exists(draft_path):
+            os.remove(draft_path)
+
+        # 3. 清理归档文件
+        archive_path = os.path.join(settings.DATA_DIR, book_id, "chapter_archive", f"chapter_{chapter_num:03d}.md")
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
+
+        # 4. 清理 KV 数据库中的章节摘要
+        kv_db_path = os.path.join(settings.DATA_DIR, book_id, "kv_state.sqlite")
+        if os.path.exists(kv_db_path):
+            async with aiosqlite.connect(kv_db_path) as kv_db:
+                await kv_db.execute("DELETE FROM system_state WHERE key = ?", (f"chapter_summary_{chapter_num}",))
+                await kv_db.commit()
+
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

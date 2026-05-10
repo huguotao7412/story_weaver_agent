@@ -120,7 +120,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             content=f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n【第 {chapter_num} 章定稿正文】：\n{draft}\n\n请提取状态变更与伏笔。")
     ]
 
-    llm = get_llm(model_type="main", temperature=0.1)
+    llm = get_llm(temperature=0.1)
     structured_llm = llm.with_structured_output(MemoryExtraction, method="function_calling")
 
     memory_updates = None
@@ -187,7 +187,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
         # ==========================================
         # 🌟 层级化摘要核心逻辑 (统一使用 main 模型)
         # ==========================================
-        main_llm = get_llm(model_type="main", temperature=0.1)
+        main_llm = get_llm(temperature=0.1)
 
         print("📝 [Memory-Keeper] 正在生成本章 200 字核心摘要...")
         summary_prompt = f"请将以下这章网文正文压缩为200字的核心剧情摘要。只保留最关键的动作、结果和结尾的悬念，去掉废话和景色描写：\n{draft}"
@@ -196,6 +196,15 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             current_summary_text = summary_msg.content.strip()
             print("✅ [Memory-Keeper] 单章摘要生成成功入库！")
             await tracker.save_chapter_summary(chapter_num, current_summary_text)
+
+            # 🌟 将本章细节灌入 Volume 和 Phase RAG 库，确保层级检索有数据可查
+            try:
+                chapter_events = [current_summary_text]
+                if len(draft) > 200:
+                    chapter_events.append(draft[:200] + "...")  # 附带正文开头片段增强语义检索
+                await asyncio.to_thread(rag_engine.insert_chapter_details, chapter_events, chapter_num)
+            except Exception as e:
+                print(f"⚠️ [Memory-Keeper] RAG 章节细节入库失败: {e}")
         except Exception as e:
             print(f"⚠️ [Memory-Keeper] 单章摘要生成失败: {e}")
             current_summary_text = "（本章摘要生成失败）"
@@ -252,4 +261,16 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
     except Exception as e:
         print(f"⚠️ [Memory-Keeper] 异常: {e}。")
-        return {}
+        # 即使 Memory_Keeper 整体失败，也要尽力传递正确的上一章结尾和摘要
+        fallback_ending = draft[-500:] if draft and len(draft) > 500 else (draft or "")
+        old_summary_raw = state.get("recent_chapters_summary", [])
+        fallback_summary = list(old_summary_raw) if isinstance(old_summary_raw, list) else []
+        return {
+            "previous_chapter_ending": fallback_ending,
+            "recent_chapters_summary": fallback_summary,
+            "revision_history": [],
+            "current_beat_sheet": "",
+            "draft_path": "",
+            "human_approval_status": "PENDING",
+            "human_feedback": ""
+        }
