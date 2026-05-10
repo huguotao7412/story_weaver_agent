@@ -153,36 +153,21 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 # 🌟 场景 B：图处于被挂起的状态 (直接唤醒)
                 run_input = None
 
-            # 启动数据流转
+            # 启动数据流转 (只监听 updates 模式，状态中无 messages 通道)
             async for chunk in storyweaver_app.astream(run_input,
                                                        config=config,
-                                                       stream_mode=["updates", "messages"]):
-                mode = chunk[0]
-                payload_data = chunk[1]
-
-                if mode == "messages":
-                    msg_chunk, metadata = payload_data
-                    if metadata.get("langgraph_node") == "Chapter_Writer" and msg_chunk.content:
-
-                        payload = {"type": "chunk", "content": msg_chunk.content}
-                        yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
-
-                elif mode == "updates":
-                    node_name = list(payload_data.keys())[0]
-                    state_updates = payload_data[node_name]
-
-                    # 🌟 核心修复点：防御性编程，确保 state_updates 是字典才执行 .items()
+                                                       stream_mode="updates"):
+                # stream_mode="updates" 时，每个 chunk 直接是 {node_name: state_updates} 的 dict
+                for node_name, state_updates in chunk.items():
                     if isinstance(state_updates, dict):
-                        safe_updates = {k: v for k, v in state_updates.items() if k != "messages"}
+                        safe_updates = {k: v for k, v in state_updates.items()}
 
-                        # 🌟🌟 拦截器核心：将本地路径伪装还原为前端需要的明文，实现前端零修改
+                        # 拦截器：将本地路径还原为前端需要的明文
                         if "draft_path" in safe_updates:
                             dp = safe_updates["draft_path"]
                             if dp and os.path.exists(dp):
                                 with open(dp, "r", encoding="utf-8") as f:
-                                    # 伪造一个 draft_content 给前端 Streamlit 用
                                     safe_updates["draft_content"] = f.read()
-                            # 删掉物理路径，不将其暴露给前端状态机
                             del safe_updates["draft_path"]
 
                         payload = {"node": node_name, "updates": safe_updates}
