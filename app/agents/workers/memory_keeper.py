@@ -118,10 +118,20 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
     power_rules = await tracker.get_power_system_rules()
     active_threads_snapshot = await tracker.get_active_threads_snapshot(current_map=current_map)
 
+    schema_str = json.dumps(MemoryExtraction.model_json_schema(), ensure_ascii=False, indent=2)
+
     prompt_messages = [
         SystemMessage(content=MEMORY_EXTRACTION_PROMPT.format(power_system_rules=power_rules)),
         HumanMessage(
-            content=f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n【第 {chapter_num} 章定稿正文】：\n{draft}\n\n请提取状态变更与伏笔。")
+            content=(
+                f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n"
+                f"【第 {chapter_num} 章定稿正文】：\n{draft}\n\n"
+                f"请提取状态变更与伏笔。\n\n"
+                f"🚨 【强约束格式要求】：\n"
+                f"你必须且只能输出一个符合以下 JSON Schema 的 JSON 对象。请严格遵守字段名和数据类型，绝对不要遗漏必填字段：\n"
+                f"{schema_str}"
+            )
+        )
     ]
 
     llm = get_llm(temperature=0.1)

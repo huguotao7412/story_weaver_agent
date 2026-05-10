@@ -35,10 +35,19 @@ async def style_analyzer_node(state: dict) -> Dict[str, Any]:
     # 实例化 LLM
     llm = get_llm(temperature=0.1)
 
+    schema_str = json.dumps(StyleGuide.model_json_schema(), ensure_ascii=False, indent=2)
+
     # 组装 Prompt
     formatted_messages = [
         SystemMessage(content=STYLE_ANALYSIS_PROMPT),
-        HumanMessage(content=f"【用户提供的参考神作片段】\n{reference_text}")
+        HumanMessage(
+            content=(
+                f"【用户提供的参考神作片段】\n{reference_text}\n\n"
+                f"🚨 【强约束格式要求】：\n"
+                f"你必须且只能输出一个符合以下 JSON Schema 的完整 JSON 对象。请勿添加任何多余的解释说明文本：\n"
+                f"{schema_str}"
+            )
+        )
     ]
 
     try:

@@ -56,7 +56,8 @@ async def continuity_editor_node(state: dict) -> Dict[str, Any]:
 
     prompt = EDITOR_SYSTEM_PROMPT.format(kv_state=current_kv_state,
                                          draft_len=len(draft) )
-    human_content = f"【本章规定节拍器 (绝对红线)】：\n{beat_sheet}\n\n【主笔生成的正文草稿】：\n{draft}\n\n请进行严格质检。"
+    schema_str = json.dumps(EditorInternalReview.model_json_schema(), ensure_ascii=False)
+    human_content = f"【本章规定节拍器 (绝对红线)】：\n{beat_sheet}\n\n【主笔生成的正文草稿】：\n{draft}\n\n请进行严格质检。必须输出以下 JSON Schema 格式的数据：\n{schema_str}"
 
     try:
         print(f"⏳ [Continuity-Editor] 正在调用大模型进行质检...")

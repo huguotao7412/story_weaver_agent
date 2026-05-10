@@ -161,11 +161,29 @@ def _extract_json(text: str) -> str:
 
 async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseModel],
                             node_name: str, max_retries: int = 3, timeout: int = 180) -> BaseModel:
-    """安全调用 LLM，要求输出 JSON 并解析为指定 Pydantic 模型。比 with_structured_output 更可靠。"""
+    """安全调用 LLM，要求输出 JSON 并解析为指定 Pydantic 模型。"""
+
+    # 【修复核心 1】：提取 Pydantic 模型的 JSON Schema，准备喂给大模型
+    schema_str = json.dumps(model_cls.model_json_schema(), ensure_ascii=False, indent=2)
+    schema_instruction = (
+        f"\n\n🚨 【强约束格式要求】：\n"
+        f"你必须且只能输出一个符合以下 JSON Schema 的 JSON 对象。\n"
+        f"绝对不要遗漏任何必填字段，字段类型必须严格一致：\n"
+        f"{schema_str}"
+    )
+
+    # 【修复核心 2】：将要求拼接到最后一条消息中
+    messages_to_send = list(prompt_messages)
+    last_msg = messages_to_send[-1]
+    if hasattr(last_msg, 'content'):
+        messages_to_send[-1] = type(last_msg)(content=last_msg.content + schema_instruction)
+
     for attempt in range(max_retries):
         try:
             print(f"⏳ [{node_name}] 正在调用大模型 (第 {attempt + 1}/{max_retries} 次)...")
-            response = await asyncio.wait_for(llm.ainvoke(prompt_messages), timeout=timeout)
+            # 注意这里传入的是修改后的 messages_to_send
+            response = await asyncio.wait_for(llm.ainvoke(messages_to_send), timeout=timeout)
+
             print(f"✅ [{node_name}] 已收到回复，正在解析 JSON...")
             json_str = _extract_json(response.content)
             result = model_cls.model_validate_json(json_str)
@@ -174,13 +192,13 @@ async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseMode
         except asyncio.TimeoutError:
             print(f"⏰ [{node_name}] 第 {attempt + 1} 次调用超时 ({timeout}秒)")
             if attempt < max_retries - 1:
-                prompt_messages.append(HumanMessage(content="上次调用超时，请直接输出 JSON，不要任何额外文本。"))
+                messages_to_send.append(HumanMessage(content="上次调用超时，请直接输出 JSON，不要任何额外文本。"))
         except Exception as e:
             print(f"⚠️ [{node_name}] 第 {attempt + 1} 次调用/解析失败: {e}")
             if attempt < max_retries - 1:
-                prompt_messages.append(AIMessage(content=f"你的输出格式有误: {str(e)}"))
-                prompt_messages.append(HumanMessage(
-                    content=f"请严格按照 JSON Schema 重新输出完整的 JSON。报错信息：{str(e)}"))
+                messages_to_send.append(AIMessage(content=f"你的输出格式有误: {str(e)}"))
+                messages_to_send.append(HumanMessage(
+                    content=f"请严格按照我上面提供的 JSON Schema 重新输出完整的 JSON。不要自己发明字段名！报错信息：{str(e)}"))
     raise ValueError(f"[{node_name}] 在 {max_retries} 次重试后仍然失败")
 
 
