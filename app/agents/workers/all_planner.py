@@ -189,11 +189,11 @@ async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseMode
             print(f"✅ [{node_name}] JSON 解析成功！", flush=True)
             return result
         except asyncio.TimeoutError:
-            print(f"⏰ [{node_name}] 第 {attempt + 1} 次调用超时 ({timeout}秒)")
+            print(f"⏰ [{node_name}] 第 {attempt + 1} 次调用超时 ({timeout}秒)", flush=True)
             if attempt < max_retries - 1:
                 messages_to_send.append(HumanMessage(content="上次调用超时，请直接输出 JSON，不要任何额外文本。"))
         except Exception as e:
-            print(f"⚠️ [{node_name}] 第 {attempt + 1} 次调用/解析失败: {e}")
+            print(f"⚠️ [{node_name}] 第 {attempt + 1} 次调用/解析失败: {e}", flush=True)
             if attempt < max_retries - 1:
                 messages_to_send.append(AIMessage(content=f"你的输出格式有误: {str(e)}"))
                 messages_to_send.append(HumanMessage(
@@ -213,8 +213,16 @@ def get_focused_volume_phases(volume_phases_json: str, current_chapter_num: int)
         return volume_phases_json
 
     try:
-        data = json.loads(volume_phases_json)
-        phases = data.get("phases", [])
+        parsed_data = json.loads(volume_phases_json)
+        # 防御：Pydantic 序列化为 {"phases": [...]}，但也兼容纯列表格式
+        if isinstance(parsed_data, dict) and "phases" in parsed_data:
+            phases = parsed_data["phases"]
+            data = parsed_data
+        elif isinstance(parsed_data, list):
+            phases = parsed_data
+            data = {"phases": parsed_data}
+        else:
+            return volume_phases_json
 
         if not phases or len(phases) <= 3:
             return volume_phases_json
@@ -236,7 +244,7 @@ def get_focused_volume_phases(volume_phases_json: str, current_chapter_num: int)
         return json.dumps(data, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        print(f"⚠️ [Volume-Filter] 折叠大纲失败: {e}")
+        print(f"⚠️ [Volume-Filter] 折叠大纲失败: {e}", flush=True)
         return volume_phases_json
 
 
@@ -252,8 +260,16 @@ def get_focused_phase_chapters(phase_chapters_json: str, current_chapter_num: in
         return phase_chapters_json
 
     try:
-        data = json.loads(phase_chapters_json)
-        summaries = data.get("chapter_summaries", [])
+        parsed_data = json.loads(phase_chapters_json)
+        # 防御：Pydantic 序列化为 {"chapter_summaries": [...]}，但也兼容纯列表格式
+        if isinstance(parsed_data, dict) and "chapter_summaries" in parsed_data:
+            summaries = parsed_data["chapter_summaries"]
+            data = parsed_data
+        elif isinstance(parsed_data, list):
+            summaries = parsed_data
+            data = {"chapter_summaries": parsed_data}
+        else:
+            return phase_chapters_json
 
         if not summaries:
             return phase_chapters_json
@@ -283,7 +299,7 @@ def get_focused_phase_chapters(phase_chapters_json: str, current_chapter_num: in
         return json.dumps(data, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        print(f"⚠️ [Phase-Filter] 大纲切片失败: {e}")
+        print(f"⚠️ [Phase-Filter] 大纲切片失败: {e}", flush=True)
         return phase_chapters_json
 
 
@@ -298,21 +314,21 @@ async def book_planner_node(state: dict) -> Dict[str, Any]:
     if book_outline and book_outline.strip() != "":
         return {"is_book_initialized": True}
 
-    print(f"📚 [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...")
+    print(f"📚 [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...", flush=True)
     llm = get_llm(temperature=0.3)
 
     user_input = state.get("user_input", "请按网文套路推进")
     world_bible_preset = state.get("world_bible_context", "")
 
     if world_bible_preset:
-        print("   [Book-Planner] 检测到作者预设的《世界观设定》，将以此为基准推演大纲...")
+        print("   [Book-Planner] 检测到作者预设的《世界观设定》，将以此为基准推演大纲...", flush=True)
         prompt_content = (
             f"【作者预设的权威世界观（请绝对遵循，不要擅自修改设定的规则与境界）】：\n{world_bible_preset}\n\n"
             f"【本次剧情脑洞/指令】：{user_input}\n\n"
             f"任务：请基于上述权威世界观，推演出【全书十卷大纲】，并将预设世界观整理润色后填入 world_bible 字段中返回。"
         )
     else:
-        print("   [Book-Planner] 无预设设定，将根据脑洞从零生成世界观...")
+        print("   [Book-Planner] 无预设设定，将根据脑洞从零生成世界观...", flush=True)
         prompt_content = f"【用户初始脑洞】：{user_input}\n请发挥创意，从零构建《世界观圣经》并规划【全书十卷大纲】。"
 
     try:
@@ -359,7 +375,7 @@ async def volume_planner_node(state: dict) -> Dict[str, Any]:
     if volume_phases and volume_phases.strip() != "" and not is_new_volume:
         return {"is_volume_initialized": True}
 
-    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在提取底层状态进行软修正...")
+    print(f"📜 [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在提取底层状态进行软修正...", flush=True)
 
     llm = get_llm(temperature=0.3)
     book_outline = state.get("book_outline_context", "暂无总纲")
@@ -423,7 +439,7 @@ async def phase_planner_node(state: dict) -> Dict[str, Any]:
     current_phase_name = f"第 {current_phase_index + 1} 期"
     start_phase_of_volume = (current_volume_num - 1) * 5 + 1
 
-    print(f"📑 [Phase-Planner] 触发跨期推演！当前进入【{current_phase_name}】，正在提取本卷真实剧情碎片...")
+    print(f"📑 [Phase-Planner] 触发跨期推演！当前进入【{current_phase_name}】，正在提取本卷真实剧情碎片...", flush=True)
 
     llm = get_llm(temperature=0.2)
     world_bible = state.get("world_bible_context", "")
@@ -487,7 +503,7 @@ async def chapter_planner_node(state: dict) -> Dict[str, Any]:
     """取代原有的 plot_planner_node，专注于生成微观 3-5 个节拍"""
     current_chapter_num = state.get("current_chapter_num", 1)
     current_book_id = state.get("book_id", "default_book")
-    print(f"📍 [Chapter-Planner] 正在严格对齐本期十章梗概，拆解第 {current_chapter_num} 章节拍器...")
+    print(f"📍 [Chapter-Planner] 正在严格对齐本期十章梗概，拆解第 {current_chapter_num} 章节拍器...", flush=True)
 
     latest_user_instruction = state.get("user_input", "")
 

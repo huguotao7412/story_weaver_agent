@@ -153,13 +153,16 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 # 🌟 场景 B：图处于被挂起的状态 (直接唤醒)
                 run_input = None
 
-            # 🌟 恢复双流监听：同时监听节点状态更新与底层大模型的实时打字流
+            # 🌟 双流监听：LangGraph 1.x 的 chunk 格式为 (namespace, mode, data) 三元组
             async for chunk in storyweaver_app.astream(run_input,
                                                        config=config,
                                                        stream_mode=["updates", "messages"]):
-                # LangGraph 双模式下，chunk 是一个元组: (mode, payload)
-                mode = chunk[0]
-                payload_data = chunk[1]
+                # LangGraph 1.x: chunk = (namespace, mode, data)
+                # LangGraph 0.2.x: chunk = (mode, data)
+                if len(chunk) == 3:
+                    _, mode, payload_data = chunk
+                else:
+                    mode, payload_data = chunk
 
                 if mode == "messages":
                     # 实时捕获主笔的打字流推送给前端
@@ -185,7 +188,7 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                             payload = {"node": node_name, "updates": safe_updates}
                             yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
                         else:
-                            print(f"⚠️ [跳过解析] 节点 {node_name} 的状态更新不是字典格式，跳过传给前端。")
+                            print(f"⚠️ [跳过解析] 节点 {node_name} 的状态更新不是字典格式，跳过传给前端。", flush=True)
 
             # 探测断点位置并给前端发送挂起信号
             new_state = await storyweaver_app.aget_state(config)
@@ -196,9 +199,10 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                     yield "data: {\"status\": \"PAUSED_FOR_HUMAN_REVIEW\"}\n\n"
 
         except Exception as e:
-            # 🌟 核心监控：将异常的完整堆栈打印在后端终端
+            # 🌟 核心监控：红色醒目报错 + 完整堆栈，拒绝静默崩溃
+            print(f"❌ [Server Stream Error] 后端流式服务发生严重异常: {e}", flush=True)
             traceback.print_exc()
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

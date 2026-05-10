@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import langgraph; from langgraph import __version__; print\\(__version__\\)\")",
+      "Bash(python -c \"import pkg_resources; print\\(pkg_resources.get_distribution\\('langgraph'\\).version\\)\")",
+      "Bash(pip show *)"
+    ]
+  }
+}

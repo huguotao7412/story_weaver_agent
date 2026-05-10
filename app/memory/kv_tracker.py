@@ -19,6 +19,8 @@ class AsyncKVTracker:
     async def init_db(self):
         """异步初始化数据库表结构（每次实例化后必须 await 此方法）"""
         async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("PRAGMA busy_timeout=5000")
             # system_state 表：存放全局环境、规则等
             await db.execute('''CREATE TABLE IF NOT EXISTS system_state (key TEXT PRIMARY KEY, value TEXT)''')
             # characters 表：存放角色信息，灵活字段存入 JSON

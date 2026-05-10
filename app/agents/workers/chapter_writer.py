@@ -166,10 +166,16 @@ async def chapter_writer_node(state: dict, config: RunnableConfig) -> Dict[str, 
         print(f"✍️ [Chapter-Writer] 正在执行分段式码字生成第 {current_chapter_num} 章正文...")
         try:
             cleaned_sheet = re.sub(r"^```json\s*", "", current_beat_sheet).replace("```", "").strip()
-            beat_sheet_dict = json.loads(cleaned_sheet)
-            beats = beat_sheet_dict.get("beats", [])
+            parsed_data = json.loads(cleaned_sheet)
+            # 防御：Pydantic 序列化为 {"beats": [...]}，但也兼容纯列表格式
+            if isinstance(parsed_data, dict) and "beats" in parsed_data:
+                beats = parsed_data["beats"]
+            elif isinstance(parsed_data, list):
+                beats = parsed_data
+            else:
+                beats = []
         except Exception as e:
-            print(f"⚠️ [Chapter-Writer] 大纲 JSON 解析失败，退化为单次生成: {e}")
+            print(f"⚠️ [Chapter-Writer] 大纲 JSON 反序列化失败: {e}", flush=True)
             beats = []
 
         if len(beats) >= 2:
