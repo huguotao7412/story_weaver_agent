@@ -163,7 +163,7 @@ async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseMode
                             node_name: str, max_retries: int = 3, timeout: int = 180) -> BaseModel:
     """安全调用 LLM，要求输出 JSON 并解析为指定 Pydantic 模型。"""
 
-    # 【修复核心 1】：提取 Pydantic 模型的 JSON Schema，准备喂给大模型
+    # 提取 Pydantic 模型的 JSON Schema，准备喂给大模型
     schema_str = json.dumps(model_cls.model_json_schema(), ensure_ascii=False, indent=2)
     schema_instruction = (
         f"\n\n🚨 【强约束格式要求】：\n"
@@ -172,7 +172,6 @@ async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseMode
         f"{schema_str}"
     )
 
-    # 【修复核心 2】：将要求拼接到最后一条消息中
     messages_to_send = list(prompt_messages)
     last_msg = messages_to_send[-1]
     if hasattr(last_msg, 'content'):
@@ -180,24 +179,38 @@ async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseMode
 
     for attempt in range(max_retries):
         try:
-            print(f"⏳ [{node_name}] 正在调用大模型进行复杂推演 (第 {attempt + 1}/{max_retries} 次)，预计耗时 30-60 秒，请耐心等待...", flush=True)
-            response = await asyncio.wait_for(llm.ainvoke(messages_to_send), timeout=timeout)
+            print(f"⏳ [{node_name}] 正在调用大模型进行复杂推演 (第 {attempt + 1}/{max_retries} 次)...", flush=True)
+
+            # 🌟 核心修改：将原本阻塞的 ainvoke 替换为 astream，把大模型的思考过程直接投射到控制台
+            response_content = ""
+
+            async def fetch_stream():
+                nonlocal response_content
+                async for chunk in llm.astream(messages_to_send):
+                    print(chunk.content, end="", flush=True)  # 实时打印每一个字
+                    response_content += chunk.content
+                print("\n")  # 打印结束换行
+
+            # 加上超时控制
+            await asyncio.wait_for(fetch_stream(), timeout=timeout)
 
             print(f"✅ [{node_name}] 已收到大模型回复，正在解析 JSON...", flush=True)
-            json_str = _extract_json(response.content)
+            json_str = _extract_json(response_content)
             result = model_cls.model_validate_json(json_str)
             print(f"✅ [{node_name}] JSON 解析成功！", flush=True)
             return result
+
         except asyncio.TimeoutError:
-            print(f"⏰ [{node_name}] 第 {attempt + 1} 次调用超时 ({timeout}秒)", flush=True)
+            print(f"\n⏰ [{node_name}] 第 {attempt + 1} 次调用超时 ({timeout}秒)，API未响应！", flush=True)
             if attempt < max_retries - 1:
                 messages_to_send.append(HumanMessage(content="上次调用超时，请直接输出 JSON，不要任何额外文本。"))
         except Exception as e:
-            print(f"⚠️ [{node_name}] 第 {attempt + 1} 次调用/解析失败: {e}", flush=True)
+            print(f"\n⚠️ [{node_name}] 第 {attempt + 1} 次调用/解析失败: {e}", flush=True)
             if attempt < max_retries - 1:
                 messages_to_send.append(AIMessage(content=f"你的输出格式有误: {str(e)}"))
                 messages_to_send.append(HumanMessage(
                     content=f"请严格按照我上面提供的 JSON Schema 重新输出完整的 JSON。不要自己发明字段名！报错信息：{str(e)}"))
+
     raise ValueError(f"[{node_name}] 在 {max_retries} 次重试后仍然失败")
 
 

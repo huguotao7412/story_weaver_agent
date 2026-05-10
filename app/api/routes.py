@@ -156,16 +156,28 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
             import asyncio
             stream_iter = storyweaver_app.astream(run_input, config=config, stream_mode=["updates", "messages"])
 
+            async def fetch_next():
+                return await anext(stream_iter)
+
+            pending_task = None  # 用于持有后台正在运行的 LangGraph 任务
+
             while True:
-                try:
-                    # 使用 wait_for 设定 15 秒超时
-                    chunk = await asyncio.wait_for(anext(stream_iter), timeout=15.0)
-                except asyncio.TimeoutError:
-                    # 如果超时，说明系统正在深层推演，发送心跳包保活
-                    yield f"data: {json.dumps({'type': 'ping', 'content': 'keep-alive'})}\n\n"
-                    continue
-                except StopAsyncIteration:
-                    break
+                # 如果没有挂起的任务，则创建一个新的获取任务
+                if pending_task is None:
+                    pending_task = asyncio.create_task(fetch_next())
+
+                # 🌟 核心修复：使用 asyncio.wait 代替 wait_for，超时后不会强杀 pending_task
+                done, pending = await asyncio.wait([pending_task], timeout=15.0)
+
+                if pending_task in done:
+                    # 任务已完成，提取结果
+                    try:
+                        chunk = pending_task.result()
+                        pending_task = None  # 重置，以便下一次循环拉取下一个节点
+                    except StopAsyncIteration:
+                        break  # 图执行完毕，正常退出
+                    except Exception as e:
+                        raise e  # 抛出真实异常以便外层捕获
 
                 # 兼容 LangGraph 各种版本的 chunk 格式
                 if len(chunk) == 3:
