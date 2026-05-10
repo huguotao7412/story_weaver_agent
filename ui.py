@@ -223,6 +223,10 @@ def start_generation_stream(user_input, chapter_num):
                     else:
                         status_box.info(f"🧠 智能体流转中: [{node_name}]...")
 
+                if data.get("type") == "ping":
+                    status_box.info("⏳ 架构师正在推演深层大纲 (耗时较长，请耐心等待)...")
+                    continue
+
                 # 处理大模型流式输出碎片
                 if data.get("type") == "chunk":
                     status_box.info("🔥 主笔疯狂码字中...")

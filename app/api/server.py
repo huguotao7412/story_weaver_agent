@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI):
     # 🌟 核心修改：将 Checkpointer 提升到全局生命周期，挂载到 app.state
     print("💾 [Server] 正在挂载全局 LangGraph 记忆库连接池...")
     async with AsyncSqliteSaver.from_conn_string(DB_PATH) as memory:
+        await memory.setup()
         app.state.checkpoint_saver = memory
         print("⚙️ [Server] 正在全局编译 LangGraph 引擎实例...")
         workflow = build_workflow()

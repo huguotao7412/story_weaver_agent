@@ -137,9 +137,12 @@ class RAGEngine:
         self._initialized = True
 
         # 🌟 初始化时预热构建一次缓存
-        GLOBAL_BM25_CACHE.put(f"{self.book_id}_global", self._build_bm25_cache(self.global_store))
-        GLOBAL_BM25_CACHE.put(f"{self.book_id}_volume", self._build_bm25_cache(self.volume_store))
-        GLOBAL_BM25_CACHE.put(f"{self.book_id}_phase", self._build_bm25_cache(self.phase_store))
+        def _async_warmup():
+            GLOBAL_BM25_CACHE.put(f"{self.book_id}_global", self._build_bm25_cache(self.global_store))
+            GLOBAL_BM25_CACHE.put(f"{self.book_id}_volume", self._build_bm25_cache(self.volume_store))
+            GLOBAL_BM25_CACHE.put(f"{self.book_id}_phase", self._build_bm25_cache(self.phase_store))
+
+        threading.Thread(target=_async_warmup, daemon=True).start()
 
     # ==========================================
     # 🛠️ 内部存储与缓存构建辅助方法

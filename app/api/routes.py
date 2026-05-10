@@ -153,12 +153,21 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 # 🌟 场景 B：图处于被挂起的状态 (直接唤醒)
                 run_input = None
 
-            # 🌟 双流监听：LangGraph 1.x 的 chunk 格式为 (namespace, mode, data) 三元组
-            async for chunk in storyweaver_app.astream(run_input,
-                                                       config=config,
-                                                       stream_mode=["updates", "messages"]):
-                # LangGraph 1.x: chunk = (namespace, mode, data)
-                # LangGraph 0.2.x: chunk = (mode, data)
+            import asyncio
+            stream_iter = storyweaver_app.astream(run_input, config=config, stream_mode=["updates", "messages"])
+
+            while True:
+                try:
+                    # 使用 wait_for 设定 15 秒超时
+                    chunk = await asyncio.wait_for(anext(stream_iter), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # 如果超时，说明系统正在深层推演，发送心跳包保活
+                    yield f"data: {json.dumps({'type': 'ping', 'content': 'keep-alive'})}\n\n"
+                    continue
+                except StopAsyncIteration:
+                    break
+
+                # 兼容 LangGraph 各种版本的 chunk 格式
                 if len(chunk) == 3:
                     _, mode, payload_data = chunk
                 else:
