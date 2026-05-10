@@ -180,14 +180,13 @@ async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseMode
 
     for attempt in range(max_retries):
         try:
-            print(f"⏳ [{node_name}] 正在调用大模型 (第 {attempt + 1}/{max_retries} 次)...")
-            # 注意这里传入的是修改后的 messages_to_send
+            print(f"⏳ [{node_name}] 正在调用大模型进行复杂推演 (第 {attempt + 1}/{max_retries} 次)，预计耗时 30-60 秒，请耐心等待...", flush=True)
             response = await asyncio.wait_for(llm.ainvoke(messages_to_send), timeout=timeout)
 
-            print(f"✅ [{node_name}] 已收到回复，正在解析 JSON...")
+            print(f"✅ [{node_name}] 已收到大模型回复，正在解析 JSON...", flush=True)
             json_str = _extract_json(response.content)
             result = model_cls.model_validate_json(json_str)
-            print(f"✅ [{node_name}] JSON 解析成功！")
+            print(f"✅ [{node_name}] JSON 解析成功！", flush=True)
             return result
         except asyncio.TimeoutError:
             print(f"⏰ [{node_name}] 第 {attempt + 1} 次调用超时 ({timeout}秒)")

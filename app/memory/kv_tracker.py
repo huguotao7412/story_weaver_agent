@@ -18,7 +18,7 @@ class AsyncKVTracker:
 
     async def init_db(self):
         """异步初始化数据库表结构（每次实例化后必须 await 此方法）"""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             # system_state 表：存放全局环境、规则等
             await db.execute('''CREATE TABLE IF NOT EXISTS system_state (key TEXT PRIMARY KEY, value TEXT)''')
             # characters 表：存放角色信息，灵活字段存入 JSON
@@ -35,19 +35,19 @@ class AsyncKVTracker:
     # 🗺️ 全局地图与核心标签管理
     # ==========================================
     async def set_global_map(self, map_name: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
                              ("current_map", map_name))
             await db.commit()
 
     async def get_global_map(self) -> str:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute('SELECT value FROM system_state WHERE key = ?', ("current_map",)) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else "新手村"
 
     async def set_core_character(self, name: str, is_core: bool = True):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute('SELECT data FROM characters WHERE name = ?', (name,)) as cursor:
                 row = await cursor.fetchone()
                 char_data = json.loads(row[0]) if row else {"name": name, "location": "未知"}
@@ -60,7 +60,7 @@ class AsyncKVTracker:
     # 👤 角色与物品基础状态更新
     # ==========================================
     async def update_character_state(self, name: str, key: str, value: str, chapter_num: int):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute('SELECT data FROM characters WHERE name = ?', (name,)) as cursor:
                 row = await cursor.fetchone()
                 char_data = json.loads(row[0]) if row else {"name": name, "is_core": False}
@@ -72,7 +72,7 @@ class AsyncKVTracker:
             await db.commit()
 
     async def update_inventory(self, owner: str, item_name: str, action: str, chapter_num: int):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             if action.upper() == "ADD":
                 # 检查是否已存在
                 async with db.execute('SELECT id FROM inventory WHERE owner = ? AND item_name = ?',
@@ -95,7 +95,7 @@ class AsyncKVTracker:
         frozen_count = 0
         dead_count = 0
 
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute('SELECT data FROM characters') as cursor:
                 async for row in cursor:
                     char = json.loads(row[0])
@@ -146,13 +146,13 @@ class AsyncKVTracker:
     # 全局战力、设定补丁与伏笔管理 (🌟 模块二升级)
     # ==========================================
     async def set_power_system_rules(self, rules: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
                              ("power_system_rules", rules))
             await db.commit()
 
     async def get_power_system_rules(self) -> str:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute('SELECT value FROM system_state WHERE key = ?', ("power_system_rules",)) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else "（暂无战力设定）"
@@ -160,7 +160,7 @@ class AsyncKVTracker:
     # 🌟 新增：动态追加世界观补丁
     async def append_world_rule_patch(self, rule_data: dict):
         patch_text = f"\n\n【补充设定 - {rule_data['category']}】 {rule_data['rule_name']}：{rule_data['description']}"
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute('SELECT value FROM system_state WHERE key = ?', ("power_system_rules",)) as cursor:
                 row = await cursor.fetchone()
                 current_rules = row[0] if row else "（暂无战力设定）"
@@ -171,7 +171,7 @@ class AsyncKVTracker:
             await db.commit()
 
     async def add_unresolved_thread(self, thread_data: dict, chapter_num: int):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute(
                 'INSERT INTO threads (content, priority, keywords, related_map, created_in_chapter) VALUES (?, ?, ?, ?, ?)',
                 (thread_data["content"], thread_data.get("priority", "Medium"),
@@ -180,7 +180,7 @@ class AsyncKVTracker:
             await db.commit()
 
     async def remove_resolved_thread(self, thread_id: int):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute('DELETE FROM threads WHERE id = ?', (thread_id,))
             await db.commit()
 
@@ -188,7 +188,7 @@ class AsyncKVTracker:
         filtered_threads = []
         hidden_count = 0
 
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             async with db.execute(
                     'SELECT id, content, priority, keywords, related_map, created_in_chapter FROM threads') as cursor:
                 async for row in cursor:
@@ -217,14 +217,14 @@ class AsyncKVTracker:
     # 📚 层级化摘要存储 (🌟 模块一升级)
     # ==========================================
     async def save_chapter_summary(self, chapter_num: int, summary: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
                              (f"chapter_summary_{chapter_num}", summary))
             await db.commit()
 
     async def get_chapter_summaries(self, start_ch: int, end_ch: int) -> list:
         summaries = []
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             for i in range(start_ch, end_ch + 1):
                 async with db.execute('SELECT value FROM system_state WHERE key = ?',
                                       (f"chapter_summary_{i}",)) as cursor:
@@ -234,14 +234,14 @@ class AsyncKVTracker:
         return summaries
 
     async def save_phase_summary(self, phase_num: int, summary: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
                              (f"phase_summary_{phase_num}", summary))
             await db.commit()
 
     async def get_phase_summaries(self, start_phase: int, end_phase: int) -> list:
         summaries = []
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             for i in range(start_phase, end_phase + 1):
                 async with db.execute('SELECT value FROM system_state WHERE key = ?',
                                       (f"phase_summary_{i}",)) as cursor:
@@ -251,14 +251,14 @@ class AsyncKVTracker:
         return summaries
 
     async def save_volume_summary(self, volume_num: int, summary: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
                              (f"volume_summary_{volume_num}", summary))
             await db.commit()
 
     async def get_volume_summaries(self, start_volume: int, end_volume: int) -> list:
         summaries = []
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             for i in range(start_volume, end_volume + 1):
                 async with db.execute('SELECT value FROM system_state WHERE key = ?',
                                       (f"volume_summary_{i}",)) as cursor:

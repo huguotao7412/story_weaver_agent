@@ -153,27 +153,39 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 # 🌟 场景 B：图处于被挂起的状态 (直接唤醒)
                 run_input = None
 
-            # 启动数据流转 (只监听 updates 模式，状态中无 messages 通道)
+            # 🌟 恢复双流监听：同时监听节点状态更新与底层大模型的实时打字流
             async for chunk in storyweaver_app.astream(run_input,
                                                        config=config,
-                                                       stream_mode="updates"):
-                # stream_mode="updates" 时，每个 chunk 直接是 {node_name: state_updates} 的 dict
-                for node_name, state_updates in chunk.items():
-                    if isinstance(state_updates, dict):
-                        safe_updates = {k: v for k, v in state_updates.items()}
+                                                       stream_mode=["updates", "messages"]):
+                # LangGraph 双模式下，chunk 是一个元组: (mode, payload)
+                mode = chunk[0]
+                payload_data = chunk[1]
 
-                        # 拦截器：将本地路径还原为前端需要的明文
-                        if "draft_path" in safe_updates:
-                            dp = safe_updates["draft_path"]
-                            if dp and os.path.exists(dp):
-                                with open(dp, "r", encoding="utf-8") as f:
-                                    safe_updates["draft_content"] = f.read()
-                            del safe_updates["draft_path"]
-
-                        payload = {"node": node_name, "updates": safe_updates}
+                if mode == "messages":
+                    # 实时捕获主笔的打字流推送给前端
+                    msg_chunk, metadata = payload_data
+                    if metadata.get("langgraph_node") == "Chapter_Writer" and msg_chunk.content:
+                        payload = {"type": "chunk", "content": msg_chunk.content}
                         yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
-                    else:
-                        print(f"⚠️ [跳过解析] 节点 {node_name} 的状态更新不是字典格式，跳过传给前端。")
+
+                elif mode == "updates":
+                    # 节点执行完毕后的状态更新
+                    for node_name, state_updates in payload_data.items():
+                        if isinstance(state_updates, dict):
+                            safe_updates = {k: v for k, v in state_updates.items()}
+
+                            # 拦截器：将本地路径还原为前端需要的明文
+                            if "draft_path" in safe_updates:
+                                dp = safe_updates["draft_path"]
+                                if dp and os.path.exists(dp):
+                                    with open(dp, "r", encoding="utf-8") as f:
+                                        safe_updates["draft_content"] = f.read()
+                                del safe_updates["draft_path"]
+
+                            payload = {"node": node_name, "updates": safe_updates}
+                            yield f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+                        else:
+                            print(f"⚠️ [跳过解析] 节点 {node_name} 的状态更新不是字典格式，跳过传给前端。")
 
             # 探测断点位置并给前端发送挂起信号
             new_state = await storyweaver_app.aget_state(config)
@@ -265,7 +277,7 @@ async def delete_book(book_id: str):
             raise HTTPException(status_code=500, detail=f"文件清理失败: {str(e)}")
 
     try:
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with aiosqlite.connect(DB_PATH, timeout=15.0) as db:
             pattern = f"{book_id}%"
             await db.execute("DELETE FROM checkpoints WHERE thread_id LIKE ?", (pattern,))
             await db.execute("DELETE FROM checkpoint_writes WHERE thread_id LIKE ?", (pattern,))
@@ -283,7 +295,7 @@ async def reset_chapter_state(book_id: str, chapter_num: int):
     graph_thread_id = f"{book_id}_chap_{chapter_num}"
     try:
         # 1. 清理 LangGraph checkpoint 数据
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with aiosqlite.connect(DB_PATH, timeout=15.0) as db:
             await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (graph_thread_id,))
             await db.execute("DELETE FROM checkpoint_writes WHERE thread_id = ?", (graph_thread_id,))
             await db.execute("DELETE FROM checkpoint_blobs WHERE thread_id = ?", (graph_thread_id,))
@@ -302,7 +314,7 @@ async def reset_chapter_state(book_id: str, chapter_num: int):
         # 4. 清理 KV 数据库中的章节摘要
         kv_db_path = os.path.join(settings.DATA_DIR, book_id, "kv_state.sqlite")
         if os.path.exists(kv_db_path):
-            async with aiosqlite.connect(kv_db_path) as kv_db:
+            async with aiosqlite.connect(kv_db_path, timeout=15.0) as kv_db:
                 await kv_db.execute("DELETE FROM system_state WHERE key = ?", (f"chapter_summary_{chapter_num}",))
                 await kv_db.commit()
 
