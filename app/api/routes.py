@@ -6,7 +6,7 @@ import shutil
 import aiosqlite
 import traceback
 from typing import Optional, Literal, Dict, Any
-from fastapi import APIRouter, HTTPException, Request,BackgroundTasks
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
@@ -208,7 +208,7 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
 
 # === 核心接口 2：接收人类总编反馈并唤醒 (双断点分流修复版) ===
 @router.post("/feedback")
-async def receive_human_feedback(req: FeedbackRequest, request: Request, background_tasks: BackgroundTasks):
+async def receive_human_feedback(req: FeedbackRequest, request: Request):
     graph_thread_id = f"{req.thread_id}_chap_{req.chapter_num}"
     config = {"configurable": {"thread_id": graph_thread_id}}
 
@@ -233,15 +233,12 @@ async def receive_human_feedback(req: FeedbackRequest, request: Request, backgro
             await storyweaver_app.aupdate_state(config, human_decision)
 
             if req.approval_status == "APPROVED":
-                async def run_memory_keeper():
-                    try:
-                        async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
-                            pass
-                    except Exception as e:
-                        print(f"❌ [Background] Memory_Keeper 后台执行失败: {e}")
-                        traceback.print_exc()
-                background_tasks.add_task(run_memory_keeper)
-                return {"status": "success", "message": "正文已入库，后台正在提取记忆与生成摘要...", "approval": req.approval_status}
+                print("🧠 [Memory-Keeper] 正在同步提取定稿记忆并生成摘要...")
+                async for chunk in storyweaver_app.astream(None, config=config, stream_mode="updates"):
+                    node_name = list(chunk.keys())[0] if isinstance(chunk, dict) else "unknown"
+                    print(f"   → [{node_name}] 记忆入库中...")
+                print("✅ [Memory-Keeper] 记忆与摘要已全部固化至 SQLite / RAG 向量库。")
+                return {"status": "success", "message": "正文已入库，记忆提取与摘要生成完成。", "approval": req.approval_status}
             else:
                 async for _ in storyweaver_app.astream(None, config=config, stream_mode="updates"):
                     # 运行直到图再次挂起（会在 Chapter_Writer 处暂停等待 stream 接口唤醒）
