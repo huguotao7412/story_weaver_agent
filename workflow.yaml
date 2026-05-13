@@ -1,0 +1,57 @@
+version: "1.0"
+nodes:
+  - name: Book_Planner
+    agent: book_planner
+  - name: Volume_Planner
+    agent: volume_planner
+  - name: Phase_Planner
+    agent: phase_planner
+  - name: Chapter_Planner
+    agent: chapter_planner
+  - name: Chapter_Writer
+    agent: chapter_writer
+  - name: Human_Review
+    agent: human_review
+  - name: Memory_Keeper
+    agent: memory_keeper
+  - name: Continuity_Editor
+    agent: continuity_editor
+
+edges:
+  - from: Book_Planner
+    to: Volume_Planner
+  - from: Volume_Planner
+    to: Phase_Planner
+  - from: Phase_Planner
+    to: Chapter_Planner
+  - from: Chapter_Planner
+    to: Chapter_Writer
+  - from: Chapter_Writer
+    to: Continuity_Editor
+  - from: Memory_Keeper
+    to: END
+
+conditional_routes:
+  planner_router:
+    conditions:
+      - check: "not book_outline_context"
+        target: Book_Planner
+      - check: "(current_chapter_num - 1) % 50 == 0"
+        target: Volume_Planner
+      - check: "(current_chapter_num - 1) % 10 == 0"
+        target: Phase_Planner
+      - default: Chapter_Planner
+  editor_router:
+    conditions:
+      - check: "editor_comments == 'FAIL'"
+        target: Chapter_Writer
+      - default: Human_Review
+  human_review_router:
+    conditions:
+      - check: "human_approval_status == 'APPROVED'"
+        target: Memory_Keeper
+      - default: Chapter_Writer
+
+interrupt_before:
+  - Chapter_Writer
+  - Human_Review
