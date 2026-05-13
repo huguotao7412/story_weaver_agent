@@ -50,7 +50,7 @@ LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
 要求：必须采用“腰部小高潮+尾部大高潮”的经典五幕剧结构！
 - 第1期（潜龙在渊）：初入新地图，试探、情报收集、稳扎稳打。
 - 第2期（风云渐起）：卷入纷争，展露头角，获得第一波神装或小机缘。
-- 第3期（腰部高潮）：第一个大高潮爆发！击杀明面Boss，发现深层阴谋。
+- 第3期（中期爆发）：中期核心冲突爆发！击杀明面Boss，发现深层阴谋。
 - 第4期（极限蓄力）：压抑、紧迫的疯狂寻找机缘与突破大境界。
 - 第5期（终局超脱）：斩杀终极Boss，势力洗牌，并在本期进行卷末结算与告别。
 
@@ -61,6 +61,9 @@ LAYER2_VOLUME_PROMPT = """你是一个资深网文【分卷大纲主编】。
 # 3. 第三层：单期十章 (10章) (🌟 融入软修正机制)
 LAYER3_PHASE_PROMPT = """你是一个精细的网文【单期统筹编剧】。
 你的任务是基于当前卷的【{current_phase_name}】目标，规划出具体的【十章】剧情梗概。
+
+【📖 全局世界观与设定 (World Bible)】：
+{world_bible}
 
 【本卷宏观规划与历史参考】：
 {volume_phases}
@@ -73,7 +76,7 @@ LAYER3_PHASE_PROMPT = """你是一个精细的网文【单期统筹编剧】。
 {previous_phase_summaries}
 
 【🔥 最高权限红线：软修正与动态推演】：
-你现在拥有《本卷宏观规划》和《当前真实世界快照》及《前情回顾》。在拆解本期大纲时，**必须以【真实的快照和前情回顾】为绝对基准！**如果上层宏观规划与当前的现实冲突（例如某配角已死），请自动抛弃旧规划设定，顺着当前的真实脉络微调本期的走向！
+你现在拥有《全局世界观》、《本卷宏观规划》和《当前真实世界快照》及《前情回顾》。在拆解本期大纲时，**必须以【真实的快照和前情回顾】为绝对基准！**如果上层宏观规划与当前的现实冲突（例如某配角已死），请自动抛弃旧规划设定，顺着当前的真实脉络微调本期的走向！
 
 【🌟核心心流公式（必须遵守）】：
 这10章的节奏必须遵循“3低-3中-3高-1低”的波浪线，并为每章打上 tension_level 标签：
@@ -152,10 +155,17 @@ def _extract_json(text: str) -> str:
     m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
     if m:
         return m.group(1).strip()
-    # 尝试匹配最外层 JSON object
-    m = re.search(r'\{.*\}', text, re.DOTALL)
-    if m:
-        return m.group(0).strip()
+    # 尝试匹配最外层 JSON object（括号平衡匹配，避免贪婪/非贪婪的嵌套问题）
+    start = text.find('{')
+    if start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1].strip()
     return text.strip()
 
 
@@ -209,7 +219,7 @@ async def _safe_json_invoke(llm, prompt_messages: list, model_cls: Type[BaseMode
             if attempt < max_retries - 1:
                 messages_to_send.append(AIMessage(content=f"你的输出格式有误: {str(e)}"))
                 messages_to_send.append(HumanMessage(
-                    content=f"请严格按照我上面提供的 JSON Schema 重新输出完整的 JSON。不要自己发明字段名！报错信息：{str(e)}"))
+                    content=f"请严格按照以下 JSON Schema 重新输出完整的 JSON。不要自己发明字段名！\n报错信息：{str(e)}\n{schema_instruction}"))
 
     raise ValueError(f"[{node_name}] 在 {max_retries} 次重试后仍然失败")
 

@@ -32,7 +32,7 @@ class BookOutline(BaseModel):
 
 class PhaseDetail(BaseModel):
     """单期详情 (十期之一)"""
-    phase_name: str = Field(description="时期名称，例如：第1期-潜龙在渊，第5期-腰部高潮")
+    phase_name: str = Field(description="时期名称，例如：第1期-潜龙在渊，第5期-卷末决战")
     plot_mission: str = Field(description="本期的核心剧情任务和转折点")
 
 class VolumePhases(BaseModel):

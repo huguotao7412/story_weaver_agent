@@ -178,6 +178,9 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                         break  # 图执行完毕，正常退出
                     except Exception as e:
                         raise e  # 抛出真实异常以便外层捕获
+                else:
+                    # 超时未完成，跳过本轮避免 chunk 未定义或重复处理旧值
+                    continue
 
                 # 兼容 LangGraph 各种版本的 chunk 格式
                 if len(chunk) == 3:

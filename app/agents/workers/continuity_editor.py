@@ -70,11 +70,19 @@ async def continuity_editor_node(state: dict) -> Dict[str, Any]:
         content = response.content
         m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
         json_str = m.group(1).strip() if m else content.strip()
-        # fallback: find JSON object
+        # fallback: find JSON object（括号平衡匹配，避免贪婪跨对象）
         if not json_str.startswith('{'):
-            m2 = re.search(r'\{.*\}', content, re.DOTALL)
-            if m2:
-                json_str = m2.group(0).strip()
+            start = content.find('{')
+            if start != -1:
+                depth = 0
+                for i in range(start, len(content)):
+                    if content[i] == '{':
+                        depth += 1
+                    elif content[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            json_str = content[start:i + 1].strip()
+                            break
 
         review: EditorInternalReview = EditorInternalReview.model_validate_json(json_str)
 

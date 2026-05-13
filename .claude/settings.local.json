@@ -3,7 +3,12 @@
     "allow": [
       "Bash(python -c \"import langgraph; from langgraph import __version__; print\\(__version__\\)\")",
       "Bash(python -c \"import pkg_resources; print\\(pkg_resources.get_distribution\\('langgraph'\\).version\\)\")",
-      "Bash(pip show *)"
+      "Bash(pip show *)",
+      "Bash(claude plugin *)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app/api/routes.py', doraise=True\\); print\\('routes.py OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app/agents/workers/all_planner.py', doraise=True\\); print\\('all_planner.py OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app/agents/workers/memory_keeper.py', doraise=True\\); print\\('memory_keeper.py OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app/agents/workers/continuity_editor.py', doraise=True\\); print\\('continuity_editor.py OK'\\)\")"
     ]
   }
 }

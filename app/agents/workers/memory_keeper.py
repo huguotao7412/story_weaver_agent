@@ -147,9 +147,17 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
             m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', content, re.DOTALL)
             json_str = m.group(1).strip() if m else content.strip()
             if not json_str.startswith('{'):
-                m2 = re.search(r'\{.*\}', content, re.DOTALL)
-                if m2:
-                    json_str = m2.group(0).strip()
+                start = content.find('{')
+                if start != -1:
+                    depth = 0
+                    for i in range(start, len(content)):
+                        if content[i] == '{':
+                            depth += 1
+                        elif content[i] == '}':
+                            depth -= 1
+                            if depth == 0:
+                                json_str = content[start:i + 1].strip()
+                                break
 
             memory_updates = MemoryExtraction.model_validate_json(json_str)
             break
@@ -242,7 +250,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
         # 🌟 逢十归一：单期压缩 (Phase Summary)
         if chapter_num % 10 == 0:
-            current_phase = chapter_num // 10
+            current_phase = (chapter_num - 1) // 10 + 1
             print(f"📝 [Memory-Keeper] 触发【单期摘要】压缩：正在归纳第 {current_phase} 期大事件...")
             start_ch = chapter_num - 9
             phase_chapters_text_list = await tracker.get_chapter_summaries(start_ch, chapter_num)
@@ -258,7 +266,7 @@ async def memory_keeper_node(state: dict) -> Dict[str, Any]:
 
         # 🌟 逢五十归一：单卷压缩 (Volume Summary)
         if chapter_num % 50 == 0:
-            current_volume = chapter_num // 50
+            current_volume = (chapter_num - 1) // 50 + 1
             print(f"📝 [Memory-Keeper] 触发【单卷摘要】终极压缩：正在归纳第 {current_volume} 卷史诗剧情...")
             start_phase = (current_volume - 1) * 5 + 1
             end_phase = current_volume * 5
