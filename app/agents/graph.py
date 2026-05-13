@@ -1,94 +1,79 @@
 # app/agents/graph.py
+"""Generic workflow orchestrator — reads workflow.yaml to build a LangGraph StateGraph."""
+from pathlib import Path
+
+import yaml
 from langgraph.graph import StateGraph, START, END
-from typing import Literal
 
 from app.core.state import TomatoNovelState
+from app.agents.registry import get_agent_node
+from app.agents.routers import planner_router, editor_router, human_review_router
 
-from app.agents.workers.all_planner import (
-    book_planner_node,
-    volume_planner_node,
-    phase_planner_node,
-    chapter_planner_node
-)
-from app.agents.workers.continuity_editor import continuity_editor_node
-from app.agents.workers.chapter_writer import chapter_writer_node
-from app.agents.workers.memory_keeper import memory_keeper_node
-from app.agents.supervisor import human_review_node
+# Agent module imports — triggers @register decorators to populate the registry.
+# These are used by get_agent_node() when building the workflow from YAML config.
+import app.agents.book_planner          # noqa: F401  registers "book_planner"
+import app.agents.volume_planner        # noqa: F401  registers "volume_planner"
+import app.agents.phase_planner         # noqa: F401  registers "phase_planner"
+import app.agents.chapter_planner       # noqa: F401  registers "chapter_planner"
+import app.agents.supervisor            # noqa: F401  registers "human_review"
+import app.agents.workers.continuity_editor  # noqa: F401  registers "continuity_editor"
+import app.agents.workers.chapter_writer     # noqa: F401  registers "chapter_writer"
+import app.agents.workers.memory_keeper      # noqa: F401  registers "memory_keeper"
+import app.agents.workers.style_analyzer     # noqa: F401  registers "style_analyzer"
 
-def planner_router(state: TomatoNovelState) -> str:
-    """🌟 智能前置大纲路由：决定每次发车时的图入口节点"""
-    current_chapter_num = state.get("current_chapter_num", 1)
-    book_outline = state.get("book_outline_context", "")
+WORKFLOW_PATH = Path(__file__).resolve().parent.parent.parent / "workflow.yaml"
 
-    if not book_outline or book_outline.strip() == "":
-        print("🔀 [Router] 智能路由分配：新书首发 -> Book_Planner")
-        return "Book_Planner"
+# Python router function lookup for conditional edges
+_ROUTER_FUNCTIONS = {
+    "planner_router": planner_router,
+    "editor_router": editor_router,
+    "human_review_router": human_review_router,
+}
 
-    # 实现 50 章一卷的大地图跨度
-    if (current_chapter_num - 1) % 50 == 0:
-        print(f"🔀 [Router] 智能路由分配：新卷开启 (第 {current_chapter_num} 章) -> Volume_Planner")
-        return "Volume_Planner"
+# Mapping from node names in workflow.yaml to the source nodes that feed their
+# conditional edge.  Determined by the conditional_routes keys in the YAML.
+_ROUTE_SOURCE_NODES = {
+    "planner_router": START,
+    "editor_router": "Continuity_Editor",
+    "human_review_router": "Human_Review",
+}
 
-    # 保持 10 章一期不变
-    if (current_chapter_num - 1) % 10 == 0:
-        print(f"🔀 [Router] 智能路由分配：新期开启 (第 {current_chapter_num} 章) -> Phase_Planner")
-        return "Phase_Planner"
-
-    print(f"🔀 [Router] 智能路由分配：常规连载 (第 {current_chapter_num} 章) -> Chapter_Planner")
-    return "Chapter_Planner"
-
-
-def human_review_router(state: TomatoNovelState) -> Literal["Memory_Keeper", "Chapter_Writer"]:
-    status = state.get("human_approval_status", "PENDING").upper()
-    if status == "APPROVED":
-        print("🔀 [Router] 人类总编批准，流转至记忆库进行状态持久化。")
-        return "Memory_Keeper"
-    else:
-        print("🔀 [Router] 人类总编打回，附加强制指令流转至主笔重写。")
-        return "Chapter_Writer"
-
-def editor_router(state: TomatoNovelState) -> Literal["Human_Review", "Chapter_Writer"]:
-    status = state.get("editor_comments", "PASS")
-    if status == "FAIL":
-        print("🔀 [Router] 内审未通过，流转回主笔重构细节。")
-        return "Chapter_Writer"
-    else:
-        print("🔀 [Router] 内审通过 (或强行放行)，流转至人类总编审查。")
-        return "Human_Review"
 
 def build_workflow() -> StateGraph:
+    """Read workflow.yaml and compile a StateGraph with registered agent nodes."""
+    with open(WORKFLOW_PATH, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
     workflow = StateGraph(TomatoNovelState)
 
-    workflow.add_node("Book_Planner", book_planner_node)
-    workflow.add_node("Volume_Planner", volume_planner_node)
-    workflow.add_node("Phase_Planner", phase_planner_node)
-    workflow.add_node("Chapter_Planner", chapter_planner_node)
-    workflow.add_node("Chapter_Writer", chapter_writer_node)
-    workflow.add_node("Human_Review", human_review_node)
-    workflow.add_node("Memory_Keeper", memory_keeper_node)
-    workflow.add_node("Continuity_Editor", continuity_editor_node)
+    # Register all nodes
+    for node_def in config["nodes"]:
+        node_name = node_def["name"]
+        agent_key = node_def["agent"]
+        node_fn = get_agent_node(agent_key)
+        workflow.add_node(node_name, node_fn)
 
-    # 🌟 修改核心：将硬编码的 workflow.add_edge(START, "Book_Planner") 替换为条件路由
-    workflow.add_conditional_edges(
-        START,
-        planner_router,
-        {
-            "Book_Planner": "Book_Planner",
-            "Volume_Planner": "Volume_Planner",
-            "Phase_Planner": "Phase_Planner",
-            "Chapter_Planner": "Chapter_Planner"
-        }
-    )
+    # Add fixed edges
+    for edge in config["edges"]:
+        from_node = edge["from"]
+        to_node = edge["to"]
+        target = END if to_node == "END" else to_node
+        workflow.add_edge(from_node, target)
 
-    # 保留内部的顺序级联，如果从高层(如Book_Planner)进入，执行完会自动往下层走
-    workflow.add_edge("Book_Planner", "Volume_Planner")
-    workflow.add_edge("Volume_Planner", "Phase_Planner")
-    workflow.add_edge("Phase_Planner", "Chapter_Planner")
-    workflow.add_edge("Chapter_Planner", "Chapter_Writer")
-    workflow.add_edge("Chapter_Writer", "Continuity_Editor")
-    workflow.add_conditional_edges("Continuity_Editor", editor_router)
+    # Build conditional edges from YAML config
+    conditional_routes = config.get("conditional_routes", {})
+    for route_name, route_def in conditional_routes.items():
+        router_fn = _ROUTER_FUNCTIONS[route_name]
+        source_node = _ROUTE_SOURCE_NODES[route_name]
 
-    workflow.add_conditional_edges("Human_Review", human_review_router)
-    workflow.add_edge("Memory_Keeper", END)
+        # Collect all possible target nodes from conditions and default
+        targets = {}
+        for cond in route_def.get("conditions", []):
+            if "default" in cond:
+                targets[cond["default"]] = cond["default"]
+            else:
+                targets[cond["target"]] = cond["target"]
+
+        workflow.add_conditional_edges(source_node, router_fn, targets)
 
     return workflow
