@@ -1,87 +1,76 @@
-# 总管节点：负责任务分发、熔断、调用人类干预接口
-# 👑 Supervisor / Human-Review (总管与人类在环)
-# 职责：统筹节点流转，接收人类（总编）的大修批注意图并强行覆盖（Human Override）。
-# 借鉴：principia-ai/WriteHERE 的递归规划与人工干预机制
 # app/agents/supervisor.py
-
 import os
 import uuid
 from typing import Dict, Any
-from langchain_core.messages import HumanMessage, AIMessage
+
+from langchain_core.messages import AIMessage
+
+from app.agents.base import BaseAgent
+from app.agents.registry import register
 
 
-def human_review_node(state: dict) -> Dict[str, Any]:
-    """
-    👑 Human-Review Node (人类在环/总编决策)
+class HumanReviewAgent(BaseAgent):
+    name = "Human_Review"
+    prompt_file = "_unused.yaml"  # Human_Review has no LLM prompt
 
-    【机制说明】：
-    在 LangGraph 的定义中，这个节点是被设置为 `interrupt_before=["Human_Review"]` 的。
-    这意味着：当代码执行到准备进入本节点时，引擎会**强制挂起 (Pause)**。
+    def load_prompt(self, **kwargs):
+        return []  # No prompt needed for human review
 
-    此时，控制权交还给前端（如 Streamlit UI）：
-    1. 人类阅读左侧草稿。
-    2. 人类在右侧面板点击【批准】或【打回重写】，并填写 `human_feedback`。
-    3. 前端调用 `graph.update_state()` 将人类的决定注入 State。
-    4. 前端调用 `graph.invoke(None)` 恢复执行，此时才会真正跑进下面这段代码！
-    """
-    print("\n" + "=" * 50)
-    print("👑 [Supervisor] 收到来自人类总编的最高权限指令...")
+    async def execute(self, state: dict) -> Dict[str, Any]:
+        print("\n" + "=" * 50)
+        print("👑 [Supervisor] 收到来自人类总编的最高权限指令...")
 
-    # 获取人类注入的决策状态和批注反馈
-    status = state.get("human_approval_status", "PENDING").upper()
-    feedback = state.get("human_feedback", "")
-    direct_edits = state.get("direct_edits", "")
-    chapter_num = state.get("current_chapter_num", 1)
+        status = state.get("human_approval_status", "PENDING").upper()
+        feedback = state.get("human_feedback", "")
+        direct_edits = state.get("direct_edits", "")
+        chapter_num = state.get("current_chapter_num", 1)
+        draft_path = state.get("draft_path", "")
+        editor_status = state.get("editor_comments", "")
 
-    # 🌟 获取草稿存储路径
-    draft_path = state.get("draft_path", "")
+        if direct_edits and direct_edits.strip() != "":
+            print("👑 [Supervisor] 检测到总编的手动批改文本，正在强行覆盖原系统本地草稿...")
+            if draft_path:
+                os.makedirs(os.path.dirname(draft_path), exist_ok=True)
+                with open(draft_path, "w", encoding="utf-8") as f:
+                    f.write(direct_edits)
 
-    # 🌟 精确修复 3：单独获取内审状态，以便正确捕获 "PASS_WITH_WARNING"
-    editor_status = state.get("editor_comments", "")
+        if status == "APPROVED":
+            msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor", id=str(uuid.uuid4()))
+            print(f"✅ [Supervisor] 总编已批准第 {chapter_num} 章定稿！流转至 Memory-Keeper。")
+            return {
+                "human_approval_status": "APPROVED",
+                "human_feedback": "",
+                "direct_edits": "",
+                "editor_comments": "PASS",
+                "internal_revision_count": 0,
+            }
 
-    if direct_edits and direct_edits.strip() != "":
-        print("👑 [Supervisor] 检测到总编的手动批改文本，正在强行覆盖原系统本地草稿...")
-        # 🌟 状态瘦身优化：直接覆盖写入本地文件，而不是塞进状态机字典里
-        if draft_path:  # ✅ 只要路径存在，强行覆盖/创建
-            os.makedirs(os.path.dirname(draft_path), exist_ok=True)
-            with open(draft_path, "w", encoding="utf-8") as f:
-                f.write(direct_edits)
+        elif status == "REJECTED":
+            if not feedback:
+                feedback = "草稿质量不佳，请主笔重新构思并重写本章。"
 
-    # 1. 人类直接批准入库
-    if status == "APPROVED":
-        msg = AIMessage(content="[Supervisor] 总编已批准该章节入库。", name="Supervisor", id=str(uuid.uuid4()))
-        print(f"✅ [Supervisor] 总编已批准第 {chapter_num} 章定稿！流转至 Memory-Keeper。")
-        return {
-            "human_approval_status": "APPROVED",
-            "human_feedback": "",
-            "direct_edits": "",  # 清空历史状态
-            "editor_comments": "PASS",
-            "internal_revision_count": 0,  # 重置打回计数器
-        }
+            new_history = state.get("revision_history", []) + [f"【总编打回】: {feedback}"]
+            return {
+                "human_approval_status": "REJECTED",
+                "human_feedback": feedback,
+                "editor_comments": "HUMAN_OVERRIDE_TRIGGERED",
+                "revision_history": new_history
+            }
 
-    # 2. 人类打回并附加强指令覆盖 (Human Override)
-    elif status == "REJECTED":
-        if not feedback:
-            feedback = "草稿质量不佳，请主笔重新构思并重写本章。"
+        elif editor_status == "PASS_WITH_WARNING" and status == "PENDING":
+            print("⚠️ [Supervisor] 接收到内审组的强行放行信号，等待总编最终裁定。")
+            return {
+                "human_approval_status": "PENDING"
+            }
 
-        new_history = state.get("revision_history", []) + [f"【总编打回】: {feedback}"]
-        return {
-            "human_approval_status": "REJECTED",
-            "human_feedback": feedback,
-            "editor_comments": "HUMAN_OVERRIDE_TRIGGERED",
-            "revision_history": new_history
-        }
+        else:
+            print("⚠️ [Supervisor] 未检测到明确的人类决策，默认挂起。")
+            return {
+                "human_approval_status": "PENDING"
+            }
 
-    # 🌟 精确修复 4：使用 editor_status 来判断内审的放行信号，而不是 status
-    elif editor_status == "PASS_WITH_WARNING" and status == "PENDING":
-        print("⚠️ [Supervisor] 接收到内审组的强行放行信号，等待总编最终裁定。")
-        return {
-            "human_approval_status": "PENDING"
-        }
 
-    # 3. 异常状态兜底（比如没有经过 UI 交互直接触发了）
-    else:
-        print("⚠️ [Supervisor] 未检测到明确的人类决策，默认挂起。")
-        return {
-            "human_approval_status": "PENDING"
-        }
+@register("human_review")
+async def human_review_node(state: dict) -> Dict[str, Any]:
+    agent = HumanReviewAgent()
+    return await agent.execute(state)
