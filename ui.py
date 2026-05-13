@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Any
 import requests
 import streamlit as st
 from app.core.config import settings
@@ -25,7 +26,7 @@ st.markdown("""
 
 # 封装 API 请求工具函数
 @st.cache_data(ttl=2)
-def fetch_data(endpoint: str, key: str, default: any):
+def fetch_data(endpoint: str, key: str, default: Any):
     try:
         res = requests.get(f"{API_BASE_URL}{endpoint}", timeout=5)
         return res.json().get(key, default) if res.status_code == 200 else default
@@ -199,35 +200,14 @@ def start_generation_stream(user_input, chapter_num):
                 if not decoded.startswith("data: "): continue
 
                 data = json.loads(decoded[6:])
-                if "error" in data:
-                    status_box.error(f"🚨 后端错误: {data['error']}")
+
+                # 错误处理
+                if "error" in data or data.get("type") == "error":
+                    status_box.error(f"🚨 后端错误: {data.get('error') or data.get('content')}")
                     st.session_state.app_stage = "IDLE"
                     st.stop()
 
-                # 处理节点状态播报
-                if "node" in data:
-                    node_name = data["node"]
-                    updates = data.get("updates", {})
-
-                    if node_name == "Continuity_Editor":
-                        editor_status = updates.get("editor_comments", "")
-                        if editor_status == "FAIL":
-                            status_box.error("🚨 质检拦截：发现情节抢跑或字数不足，正在强制主笔返工重修！")
-                            st.session_state.draft_content = ""
-                        elif editor_status == "PASS":
-                            status_box.success("✅ 质检通过：逻辑核对无误！")
-                        elif editor_status == "PASS_WITH_WARNING":
-                            status_box.warning("⚠️ 质检警告：重试达上限，已强制放行交由总编裁决。")
-                    elif node_name == "Chapter_Writer":
-                        status_box.info("✍️ 金牌主笔已交稿，内审组正在核对逻辑...")
-                    else:
-                        status_box.info(f"🧠 智能体流转中: [{node_name}]...")
-
-                if data.get("type") == "ping":
-                    status_box.info("⏳ 架构师正在推演深层大纲 (耗时较长，请耐心等待)...")
-                    continue
-
-                # 处理大模型流式输出碎片
+                # 大模型流式输出碎片
                 if data.get("type") == "chunk":
                     status_box.info("🔥 主笔疯狂码字中...")
                     st.session_state.draft_content += data["content"]
@@ -242,10 +222,29 @@ def start_generation_stream(user_input, chapter_num):
                     st.session_state.app_stage = "REVIEW_DRAFT"
                     break
 
-                # 状态同步
-                updates = data.get("updates", {})
-                for k in ["target_writing_style", "current_beat_sheet", "draft_content"]:
-                    if k in updates: st.session_state[k] = updates[k]
+                # 节点状态播报与状态同步
+                if "node" in data:
+                    node_name = data["node"]
+                    updates = data.get("updates", {})
+
+                    # 同步后端状态到前端 session
+                    for k in ["target_writing_style", "current_beat_sheet", "draft_content"]:
+                        if k in updates: st.session_state[k] = updates[k]
+
+                    if node_name == "Continuity_Editor":
+                        editor_status = updates.get("editor_comments", "")
+                        if editor_status == "FAIL":
+                            status_box.error("🚨 质检拦截：发现情节抢跑或字数不足，正在强制主笔返工重修！")
+                            st.session_state.draft_content = ""
+                            stream_box.empty()
+                        elif editor_status == "PASS":
+                            status_box.success("✅ 质检通过：逻辑核对无误！")
+                        elif editor_status == "PASS_WITH_WARNING":
+                            status_box.warning("⚠️ 质检警告：重试达上限，已强制放行交由总编裁决。")
+                    elif node_name == "Chapter_Writer":
+                        status_box.info("✍️ 金牌主笔已交稿，内审组正在核对逻辑...")
+                    else:
+                        status_box.info(f"🧠 智能体流转中: [{node_name}]...")
 
     except Exception as e:
         status_box.error(f"引擎通信异常: {e}")

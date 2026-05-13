@@ -8,7 +8,23 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\('app/api/routes.py', doraise=True\\); print\\('routes.py OK'\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\('app/agents/workers/all_planner.py', doraise=True\\); print\\('all_planner.py OK'\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\('app/agents/workers/memory_keeper.py', doraise=True\\); print\\('memory_keeper.py OK'\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('app/agents/workers/continuity_editor.py', doraise=True\\); print\\('continuity_editor.py OK'\\)\")"
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app/agents/workers/continuity_editor.py', doraise=True\\); print\\('continuity_editor.py OK'\\)\")",
+      "Bash(python -m py_compile app/agents/workers/all_planner.py)",
+      "Bash(python -m py_compile app/agents/workers/continuity_editor.py)",
+      "Bash(python -m py_compile app/agents/workers/memory_keeper.py)",
+      "Bash(python -m py_compile app/api/routes.py)",
+      "Bash(python -m py_compile ui.py)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(touch \"F:/yan/python/2itemst/story_weaver_agent/app/__init__.py\")",
+      "Bash(touch \"F:/yan/python/2itemst/story_weaver_agent/app/agents/__init__.py\")",
+      "Bash(python -c \"from app.agents.base import BaseAgent; print\\('BaseAgent imported OK'\\)\")",
+      "Bash(git commit *)",
+      "Bash(python -c \"from app.core.state import TomatoNovelState; s: TomatoNovelState = {'book_id': 'test', 'current_chapter_num': 1}; print\\('State dict works:', s['book_id'], s['current_chapter_num']\\)\")",
+      "Bash(python -c \"import yaml; from pathlib import Path; d = Path\\('prompts'\\); [print\\(f'{f.name}: OK'\\) for f in sorted\\(d.glob\\('*.yaml'\\)\\) if \\(yaml.safe_load\\(f.read_text\\(encoding='utf-8'\\)\\), True\\)]\")",
+      "Bash(python *)",
+      "Bash(git -C \"F:/yan/python/2itemst/story_weaver_agent\" add app/agents/workers/memory_keeper.py)",
+      "Bash(git -C \"F:/yan/python/2itemst/story_weaver_agent\" commit -m \"refactor: memory_keeper inherits BaseAgent, uses externalized prompt\")"
     ]
   }
 }

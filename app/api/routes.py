@@ -2,6 +2,7 @@
 
 import os
 import json
+import asyncio
 import shutil
 import aiosqlite
 import traceback
@@ -153,18 +154,13 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 # 🌟 场景 B：图处于被挂起的状态 (直接唤醒)
                 run_input = None
 
-            import asyncio
             stream_iter = storyweaver_app.astream(run_input, config=config, stream_mode=["updates", "messages"])
-
-            async def fetch_next():
-                return await anext(stream_iter)
-
-            pending_task = None  # 用于持有后台正在运行的 LangGraph 任务
+            pending_task = None
 
             while True:
                 # 如果没有挂起的任务，则创建一个新的获取任务
                 if pending_task is None:
-                    pending_task = asyncio.create_task(fetch_next())
+                    pending_task = asyncio.create_task(anext(stream_iter))
 
                 # 🌟 核心修复：使用 asyncio.wait 代替 wait_for，超时后不会强杀 pending_task
                 done, pending = await asyncio.wait([pending_task], timeout=15.0)
