@@ -105,17 +105,19 @@ class ChapterWriterAgent(BaseAgent):
                 extra_instruction = (
                     f"【🔥 最高指令：人类总编打回重写】\n"
                     f"人类总编严厉批注：{human_feedback}\n"
+                    f"【本章原定大纲 (必须绝对遵循)】：\n{current_beat_sheet}\n\n" # 🌟 修复注入大纲
                     f"以下是本章经历的历史打回记录与建议（请避开同样的错误）：\n{history_text}\n\n"
                     f"你的原稿如下：\n{current_draft}\n\n"
-                    f"任务：请仔细揣摩总编意图，抛弃原稿不合理部分，结合大纲彻底重写本章正文。务必让总编满意！"
+                    f"任务：请仔细揣摩总编意图，抛弃原稿不合理部分，严格结合大纲彻底重写本章正文！"
                 )
             else:
                 print(f"✍️ [Chapter-Writer] 收到内审打回指令，正在疯狂填补细节注水...")
                 extra_instruction = (
                     f"【⚠️ 内部质检打回重写】\n"
+                    f"【本章原定大纲 (必须绝对遵循)】：\n{current_beat_sheet}\n\n" # 🌟 修复注入大纲
                     f"以下是主编(内审组)的打回意见栈：\n{history_text}\n\n"
                     f"你的原稿如下：\n{current_draft}\n\n"
-                    f"任务：仔细阅读内审意见！绝对禁止往后推时间线抢跑！如果字数不够，请在节拍器要求的高权重画面疯狂加环境白描与心理戏！彻底重写。"
+                    f"任务：仔细阅读内审意见！绝对禁止往后推时间线抢跑！彻底重写。"
                 )
 
             formatted_messages = _build_messages(extra_instruction)
@@ -163,7 +165,8 @@ class ChapterWriterAgent(BaseAgent):
                         f"【第 {chunk_idx} 部分生成指令】\n"
                         f"这是你当前要专注完成的微观节拍器：\n{chunk_outline}\n"
                         f"任务：请严格按照这部分大纲，生成正文。目标字数 {target_words} 字左右。\n"
-                        f"🚨 绝对红线：只能推进到当前大纲节点！必须用冰山理论填满细节！"
+                        f"🚨 绝对红线：只能推进到当前大纲节点！必须用冰山理论填满细节！\n"
+                        f"💡 排版要求：为了接力排版美观，请务必在你输出的这段正文的最后面，直接打上两个换行符。"
                     )
 
                     messages = _build_messages(extra_instruction, hook_override=current_hook)

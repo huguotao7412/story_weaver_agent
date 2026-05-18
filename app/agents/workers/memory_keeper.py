@@ -133,12 +133,31 @@ class MemoryKeeperAgent(BaseAgent):
             thread_task = self.safe_json_invoke(llm, thread_messages, PlotThreadExtraction, max_retries=3)
             lore_task = self.safe_json_invoke(llm, lore_messages, WorldLoreExtraction, max_retries=3)
 
-            entity_res, thread_res, lore_res = await asyncio.gather(
-                entity_task, thread_task, lore_task
+            results = await asyncio.gather(
+                entity_task, thread_task, lore_task, return_exceptions=True
             )
+
+            # 独立解析并容错
+            if isinstance(results[0], Exception):
+                print(f"⚠️ [Memory-Keeper] 实体提取异常: {results[0]}")
+                entity_res = EntityExtraction(map_update=MapUpdate(has_changed=False, new_map_name=""))
+            else:
+                entity_res = results[0]
+
+            if isinstance(results[1], Exception):
+                print(f"⚠️ [Memory-Keeper] 伏笔提取异常: {results[1]}")
+                thread_res = PlotThreadExtraction()
+            else:
+                thread_res = results[1]
+
+            if isinstance(results[2], Exception):
+                print(f"⚠️ [Memory-Keeper] 世界观提取异常: {results[2]}")
+                lore_res = WorldLoreExtraction()
+            else:
+                lore_res = results[2]
             print("✅ [Memory-Keeper] 三路专家记忆提取成功！")
         except Exception as e:
-            print(f"❌ [Memory-Keeper] 三路专家提取失败: {e}")
+            print(f"❌ [Memory-Keeper] 严重异常: {e}")
             return {"human_approval_status": "PENDING", "human_feedback": ""}
 
         try:
