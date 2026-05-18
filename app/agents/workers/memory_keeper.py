@@ -55,14 +55,23 @@ class WorldRuleUpdate(BaseModel):
     category: Literal["功法原理", "天地法则", "新境界", "势力格局"] = Field(description="设定分类")
 
 
-class MemoryExtraction(BaseModel):
+class EntityExtraction(BaseModel):
+    """专家 A：专精实体追踪（地图变更、角色状态、物品流转）"""
     map_update: MapUpdate = Field(description="主角宏观地图变更检测")
     character_updates: List[CharacterUpdate] = Field(default_factory=list, description="角色状态变更")
     item_updates: List[ItemUpdate] = Field(default_factory=list, description="物品状态变更")
+
+
+class PlotThreadExtraction(BaseModel):
+    """专家 B：专精伏笔与悬念追踪（挖坑与填坑）"""
     new_mysteries: List[NewThread] = Field(default_factory=list,
                                            description="【挖坑】本章新挖的悬念坑、未解之谜、新结的死仇或长期约定。必须严格分类和打标！")
     resolved_mysteries: List[ResolvedThread] = Field(default_factory=list,
                                                      description="【填坑】对照现有的伏笔池，本章成功彻底解决掉的伏笔")
+
+
+class WorldLoreExtraction(BaseModel):
+    """专家 C：专精世界观与大事件追踪（设定补丁、全局事件）"""
     world_rule_updates: List[WorldRuleUpdate] = Field(default_factory=list,
                                                       description="【世界观补丁】本章如果拓展了世界观、新境界、揭露了新背景，请提取为补丁")
     global_events: List[str] = Field(default_factory=list, description="其他对世界观有影响的全局客观大事件")
@@ -92,33 +101,55 @@ class MemoryKeeperAgent(BaseAgent):
         power_rules = await tracker.get_power_system_rules()
         active_threads_snapshot = await tracker.get_active_threads_snapshot(current_map=current_map)
 
-        messages = self.load_prompt(power_system_rules=power_rules)
-        messages.append(HumanMessage(
+        base_messages = self.load_prompt(power_system_rules=power_rules)
+
+        # 为三个专家分别构建专用消息（拷贝 base_messages 避免并发修改冲突）
+        entity_messages = list(base_messages) + [HumanMessage(
+            content=(
+                f"【第 {chapter_num} 章定稿正文】：\n{draft}\n\n"
+                f"【当前大地图】：{current_map}\n"
+                f"请专注提取：地图是否切换、角色状态变更（含 is_core 标记）、物品流转（ADD/REMOVE）。"
+            )
+        )]
+        thread_messages = list(base_messages) + [HumanMessage(
             content=(
                 f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n"
                 f"【第 {chapter_num} 章定稿正文】：\n{draft}\n\n"
-                f"请提取状态变更与伏笔。"
+                f"请专注提取：新挖的悬念坑（new_mysteries）和已解决的伏笔（resolved_mysteries）。"
             )
-        ))
+        )]
+        lore_messages = list(base_messages) + [HumanMessage(
+            content=(
+                f"【第 {chapter_num} 章定稿正文】：\n{draft}\n\n"
+                f"请专注提取：世界观设定补丁（新境界/新法则/新势力格局）和全局客观大事件。"
+            )
+        )]
 
         llm = get_llm(temperature=0.1)
 
         try:
-            memory_updates: MemoryExtraction = await self.safe_json_invoke(
-                llm, messages, MemoryExtraction, max_retries=3, timeout=180)
+            print("🧠 [Memory-Keeper] 正在并发启动：实体追踪、伏笔分析、世界观提取...")
+            entity_task = self.safe_json_invoke(llm, entity_messages, EntityExtraction, max_retries=3)
+            thread_task = self.safe_json_invoke(llm, thread_messages, PlotThreadExtraction, max_retries=3)
+            lore_task = self.safe_json_invoke(llm, lore_messages, WorldLoreExtraction, max_retries=3)
+
+            entity_res, thread_res, lore_res = await asyncio.gather(
+                entity_task, thread_task, lore_task
+            )
+            print("✅ [Memory-Keeper] 三路专家记忆提取成功！")
         except Exception as e:
-            print(f"❌ [Memory-Keeper] 连续 3 次提取状态失败，放弃本次状态更新，强制入库防卡死: {e}")
+            print(f"❌ [Memory-Keeper] 三路专家提取失败: {e}")
             return {"human_approval_status": "PENDING", "human_feedback": ""}
 
         try:
             # 1. 跨地图检测
-            if memory_updates.map_update.has_changed and memory_updates.map_update.new_map_name:
-                await tracker.set_global_map(memory_updates.map_update.new_map_name)
-                print(f"   [🗺️ 换地图触发] 主角跨越大地图至: {memory_updates.map_update.new_map_name}")
+            if entity_res.map_update.has_changed and entity_res.map_update.new_map_name:
+                await tracker.set_global_map(entity_res.map_update.new_map_name)
+                print(f"   [🗺️ 换地图触发] 主角跨越大地图至: {entity_res.map_update.new_map_name}")
 
             # 2. 批量处理角色更新
             char_updates_payload = []
-            for cu in memory_updates.character_updates:
+            for cu in entity_res.character_updates:
                     if cu.is_core:
                         await tracker.set_core_character(cu.name, is_core=True)
                     char_updates_payload.append({
@@ -130,7 +161,7 @@ class MemoryKeeperAgent(BaseAgent):
 
             # 3. 批量处理物品更新
             inventory_updates_payload = []
-            for iu in memory_updates.item_updates:
+            for iu in entity_res.item_updates:
                     inventory_updates_payload.append({
                         "owner": iu.owner, "item_name": iu.item_name,
                         "action": iu.action, "chapter_num": chapter_num
@@ -140,26 +171,26 @@ class MemoryKeeperAgent(BaseAgent):
 
             # 4. 批量处理新伏笔 (挖坑)
             threads_payload = []
-            for mystery in memory_updates.new_mysteries:
+            for mystery in thread_res.new_mysteries:
                     threads_payload.append(mystery.model_dump())
                     print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨 [{mystery.priority}]: {mystery.content}")
             if threads_payload:
                     await tracker.batch_add_unresolved_threads(threads_payload, chapter_num)
 
-            # 5. 填坑依然用循环 (因为一般单章填坑数量极少，且依赖ID删除，开销可控)
-            for resolved in memory_updates.resolved_mysteries:
+            # 5. 填坑依然用循环
+            for resolved in thread_res.resolved_mysteries:
                     await tracker.remove_resolved_thread(resolved.thread_id)
                     print(f"   [✨ 填坑完成] 尝试解决伏笔 [ID: {resolved.thread_id}]。原因: {resolved.reason}")
 
-            # 6. 世界观补丁 (同上，频率极低)
-            for patch in memory_updates.world_rule_updates:
+            # 6. 世界观补丁
+            for patch in lore_res.world_rule_updates:
                     patch_dict = patch.model_dump()
                     await tracker.append_world_rule_patch(patch_dict)
                     print(f"   [📜 设定进化] 捕获世界观补丁 [{patch_dict['category']}]: {patch_dict['rule_name']}")
 
             rag_engine = RAGEngine(book_id=current_book_id)
-            if memory_updates.global_events:
-                await asyncio.to_thread(rag_engine.insert_global_events, memory_updates.global_events, chapter_num)
+            if lore_res.global_events:
+                await asyncio.to_thread(rag_engine.insert_global_events, lore_res.global_events, chapter_num)
 
             try:
                 archive_dir = os.path.join(settings.DATA_DIR, current_book_id, "chapter_archive")

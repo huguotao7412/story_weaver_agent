@@ -4,7 +4,7 @@ import json
 import re
 from typing import Dict, Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.base import BaseAgent
@@ -85,20 +85,24 @@ class ChapterWriterAgent(BaseAgent):
 
         new_draft = ""
 
-        if is_rewrite:
-            sys_prompt = self.load_prompt(
+        # 辅助函数：加载 SystemPrompt（静态冷数据）+ HumanPrompt（动态热数据）
+        def _build_messages(extra_instruction: str, hook_override: str = None) -> list:
+            hook = hook_override if hook_override is not None else scene_hook_prompt
+            loaded = self.load_prompt(
                 recent_chapters_summary=recent_chapters_summary,
-                scene_hook_prompt=scene_hook_prompt,
+                scene_hook_prompt=hook,
                 world_bible=world_bible,
                 history_context=history_context,
                 style_guide=style_guide,
                 examples_str=examples_str,
                 dynamic_hook_rule=dynamic_hook_rule
-            )[0].content
+            )
+            return [loaded[0], HumanMessage(content=loaded[1].content + "\n\n" + extra_instruction)]
 
+        if is_rewrite:
             if human_status == "REJECTED":
                 print("✍️ [Chapter-Writer] 收到人类总编【打回重写】指令，正在后台含泪重构...")
-                instruction = (
+                extra_instruction = (
                     f"【🔥 最高指令：人类总编打回重写】\n"
                     f"人类总编严厉批注：{human_feedback}\n"
                     f"以下是本章经历的历史打回记录与建议（请避开同样的错误）：\n{history_text}\n\n"
@@ -107,14 +111,14 @@ class ChapterWriterAgent(BaseAgent):
                 )
             else:
                 print(f"✍️ [Chapter-Writer] 收到内审打回指令，正在疯狂填补细节注水...")
-                instruction = (
+                extra_instruction = (
                     f"【⚠️ 内部质检打回重写】\n"
                     f"以下是主编(内审组)的打回意见栈：\n{history_text}\n\n"
                     f"你的原稿如下：\n{current_draft}\n\n"
                     f"任务：仔细阅读内审意见！绝对禁止往后推时间线抢跑！如果字数不够，请在节拍器要求的高权重画面疯狂加环境白描与心理戏！彻底重写。"
                 )
 
-            formatted_messages = [SystemMessage(content=sys_prompt), HumanMessage(content=instruction)]
+            formatted_messages = _build_messages(extra_instruction)
             if config:
                 async for chunk in llm.astream(formatted_messages, config=config):
                     new_draft += chunk.content
@@ -123,7 +127,6 @@ class ChapterWriterAgent(BaseAgent):
                 new_draft = response.content
 
         else:
-            print(f"✍️ [Chapter-Writer] 正在执行分段式码字生成第 {current_chapter_num} 章正文...")
             try:
                 cleaned_sheet = re.sub(r"^```json\s*", "", current_beat_sheet).replace("```", "").strip()
                 parsed_data = json.loads(cleaned_sheet)
@@ -138,95 +141,56 @@ class ChapterWriterAgent(BaseAgent):
                 beats = []
 
             if len(beats) >= 2:
-                mid_index = len(beats) // 2 + len(beats) % 2
-                part1_beats = beats[:mid_index]
-                part2_beats = beats[mid_index:]
+                print(f"✍️ [Chapter-Writer] 正在执行动态滑动窗口分段码字...")
+                chunk_size = 2
+                current_hook = scene_hook_prompt
 
-                part1_outline = json.dumps({"beats": part1_beats}, ensure_ascii=False, indent=2)
-                part2_outline = json.dumps({"beats": part2_beats}, ensure_ascii=False, indent=2)
+                for i in range(0, len(beats), chunk_size):
+                    current_chunk_beats = beats[i:i + chunk_size]
+                    chunk_outline = json.dumps({"beats": current_chunk_beats}, ensure_ascii=False, indent=2)
 
-                def calc_target_words(beats_list, total_words=settings.MAX_WORDS_PER_CHAPTER):
                     try:
                         weight_sum = sum(
-                            [float(str(b.get("word_count_weight", "0")).replace("%", "")) for b in beats_list])
-                        return max(int((weight_sum / 100) * total_words), 500)
+                            [float(str(b.get("word_count_weight", "0")).replace("%", "")) for b in current_chunk_beats])
+                        target_words = max(int((weight_sum / 100) * settings.MAX_WORDS_PER_CHAPTER), 600)
                     except:
-                        return 1500
+                        target_words = 1500
 
-                target_words_p1 = calc_target_words(part1_beats)
-                target_words_p2 = calc_target_words(part2_beats)
+                    chunk_idx = i // chunk_size + 1
+                    print(f"   [Chunk {chunk_idx}] 正在生成节拍 {i + 1} 至 {min(i + chunk_size, len(beats))} (目标字数: ~{target_words}字)...")
 
-                sys_prompt_text = self.load_prompt(
-                    recent_chapters_summary=recent_chapters_summary,
-                    scene_hook_prompt=scene_hook_prompt,
-                    world_bible=world_bible,
-                    history_context=history_context,
-                    style_guide=style_guide,
-                    examples_str=examples_str,
-                    dynamic_hook_rule=dynamic_hook_rule
-                )[0].content
+                    extra_instruction = (
+                        f"【第 {chunk_idx} 部分生成指令】\n"
+                        f"这是你当前要专注完成的微观节拍器：\n{chunk_outline}\n"
+                        f"任务：请严格按照这部分大纲，生成正文。目标字数 {target_words} 字左右。\n"
+                        f"🚨 绝对红线：只能推进到当前大纲节点！必须用冰山理论填满细节！"
+                    )
 
-                print(f"   [Chunk 1] 正在生成上半篇 (目标字数: ~{target_words_p1}字)...")
-                instr_part1 = (
-                    f"【上半篇首次生成指令】\n"
-                    f"这是本章的前半部分详细节拍器（大纲）：\n{part1_outline}\n"
-                    f"任务：请严格按照这部分大纲，生成上半篇的正文。目标字数 {target_words_p1} 字左右。\n"
-                    f"🚨 绝对红线：严禁越界写出大纲未提及的后续剧情！多运用冰山理论写细节！"
-                )
-                messages_p1 = [SystemMessage(content=sys_prompt_text), HumanMessage(content=instr_part1)]
+                    messages = _build_messages(extra_instruction, hook_override=current_hook)
 
-                part1_draft = ""
-                if config:
-                    async for chunk in llm.astream(messages_p1, config=config):
-                        part1_draft += chunk.content
-                else:
-                    response = await llm.ainvoke(messages_p1)
-                    part1_draft = response.content
+                    chunk_draft = ""
+                    if config:
+                        async for chunk in llm.astream(messages, config=config):
+                            chunk_draft += chunk.content
+                    else:
+                        response = await llm.ainvoke(messages)
+                        chunk_draft = response.content
 
-                print(f"   [Chunk 2] 正在生成下半篇 (目标字数: ~{target_words_p2}字)...")
-                sys_prompt_part2 = self.load_prompt(
-                    recent_chapters_summary=recent_chapters_summary,
-                    scene_hook_prompt="（这是本章的下半篇，请直接紧接上方【上半篇前文参考】的最后一个动作继续写，绝不要另起炉灶！）",
-                    world_bible=world_bible,
-                    history_context=history_context,
-                    style_guide=style_guide,
-                    examples_str=examples_str,
-                    dynamic_hook_rule=dynamic_hook_rule
-                )[0].content
-                instr_part2 = (
-                    f"【下半篇首次生成指令】\n"
-                    f"这是本章的后半部分详细节拍器（大纲）：\n{part2_outline}\n"
-                    f"【重要：你的上半篇前文参考 (请顺着语气接着写)】：\n{part1_draft}\n"
-                    f"任务：紧接上半篇的情绪和动作，完成下半篇的正文。目标字数 {target_words_p2} 字左右。\n"
-                    f"🚨 绝对红线：严禁重复上半篇已经写过的剧情！严厉执行结尾钩子规则！"
-                )
-                messages_p2 = [SystemMessage(content=sys_prompt_part2), HumanMessage(content=instr_part2)]
+                    new_draft += chunk_draft + "\n\n"
 
-                part2_draft = ""
-                if config:
-                    async for chunk in llm.astream(messages_p2, config=config):
-                        part2_draft += chunk.content
-                else:
-                    response = await llm.ainvoke(messages_p2)
-                    part2_draft = response.content
+                    # 滑动窗口核心：提取最后 500 字作为下一轮的接续锚点
+                    clean_chunk = chunk_draft.strip()
+                    tail_text = clean_chunk[-500:] if len(clean_chunk) > 500 else clean_chunk
+                    current_hook = f"前文最后 500 字参考（请直接顺着语气和动作往下写，绝不可另起炉灶）：\n《...{tail_text}》"
 
-                new_draft = part1_draft + part2_draft
+                print(f"✅ [Chapter-Writer] 动态滑动窗口码字完毕，总字数：{len(new_draft)}")
             else:
-                sys_prompt_text = self.load_prompt(
-                    recent_chapters_summary=recent_chapters_summary,
-                    scene_hook_prompt=scene_hook_prompt,
-                    world_bible=world_bible,
-                    history_context=history_context,
-                    style_guide=style_guide,
-                    examples_str=examples_str,
-                    dynamic_hook_rule=dynamic_hook_rule
-                )[0].content
-                instruction = (
+                extra_instruction = (
                     f"【首次生成指令】\n"
                     f"这是本章的大纲：\n{current_beat_sheet}\n"
                     f"任务：请严格按照大纲给定的情节走向和爽点要求生成初稿，目标 2000 字左右。"
                 )
-                formatted_messages = [SystemMessage(content=sys_prompt_text), HumanMessage(content=instruction)]
+                formatted_messages = _build_messages(extra_instruction)
                 if config:
                     async for chunk in llm.astream(formatted_messages, config=config):
                         new_draft += chunk.content
