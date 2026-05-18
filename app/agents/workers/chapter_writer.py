@@ -10,6 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.core.llm_factory import get_llm
+from app.memory.kv_tracker import AsyncKVTracker
 from app.agents.registry import register
 
 
@@ -18,12 +19,16 @@ class ChapterWriterAgent(BaseAgent):
     prompt_file = "chapter_writer.yaml"
 
     async def execute(self, state: dict, config: RunnableConfig = None) -> Dict[str, Any]:
-        world_bible = state.get("world_bible_context", "暂无宏观世界观。")
-        current_beat_sheet = state.get("current_beat_sheet", "暂无大纲。")
-        history_context = state.get("rag_history_context", "暂无历史剧情。")
         current_chapter_num = state.get("current_chapter_num", 1)
-        prev_ending = state.get("previous_chapter_ending", "")
         current_book_id = state.get("book_id", "default_book")
+        prev_ending = state.get("previous_chapter_ending", "")
+
+        tracker = AsyncKVTracker(book_id=current_book_id)
+        await tracker.init_db()
+
+        world_bible = await tracker.get_temp_context("world_bible", "暂无宏观世界观。")
+        current_beat_sheet = await tracker.get_temp_context("beat_sheet", "暂无大纲。")
+        history_context = await tracker.get_temp_context("rag_history", "暂无历史剧情。")
 
         draft_path = state.get("draft_path", "")
         current_draft = ""

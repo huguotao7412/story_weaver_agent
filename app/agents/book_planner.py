@@ -18,17 +18,19 @@ class BookPlannerAgent(BaseAgent):
     prompt_file = "book_planner.yaml"
 
     async def execute(self, state: dict) -> Dict[str, Any]:
-        book_outline = state.get("book_outline_context", "")
         current_book_id = state.get("book_id", "default_book")
 
-        if book_outline and book_outline.strip() != "":
+        if state.get("is_book_initialized", False):
             return {"is_book_initialized": True}
 
         print(f"\U0001f4da [Book-Planner] 检测到全新长篇 (Book ID: {current_book_id})，正在初始化《全书总纲》与世界观...", flush=True)
         llm = get_llm(temperature=0.3)
 
+        tracker = AsyncKVTracker(book_id=current_book_id)
+        await tracker.init_db()
+
         user_input = state.get("user_input", "请按网文套路推进")
-        world_bible_preset = state.get("world_bible_context", "")
+        world_bible_preset = await tracker.get_temp_context("world_bible", "")
 
         if world_bible_preset:
             print("   [Book-Planner] 检测到作者预设的《世界观设定》，将以此为基准推演大纲...", flush=True)
@@ -47,8 +49,6 @@ class BookPlannerAgent(BaseAgent):
             book_result: BookOutline = await self.safe_json_invoke(llm, messages, BookOutline)
             book_json = json.dumps(book_result.model_dump(), ensure_ascii=False, indent=2)
 
-            tracker = AsyncKVTracker(book_id=current_book_id)
-            await tracker.init_db()
             await tracker.set_power_system_rules(book_result.power_system_rules)
 
             try:
@@ -59,8 +59,10 @@ class BookPlannerAgent(BaseAgent):
             except Exception as e:
                 print(f"⚠️ [Book-Planner] RAG 持久化异常: {e}")
 
-            return {"book_outline_context": book_json, "world_bible_context": book_result.world_lore,
-                    "is_book_initialized": True}
+            await tracker.save_temp_context("book_outline", book_json)
+            await tracker.save_temp_context("world_bible", book_result.world_lore)
+
+            return {"is_book_initialized": True}
         except Exception as e:
             print(f"❌ [Book-Planner] 总纲初始化失败: {e}")
             return {"is_book_initialized": False}

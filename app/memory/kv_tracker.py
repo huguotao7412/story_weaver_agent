@@ -216,6 +216,23 @@ class AsyncKVTracker:
         return snapshot
 
     # ==========================================
+    # 🗄️ 临时运行态上下文存取 (替代 LangGraph State 搬运重文本)
+    # ==========================================
+    async def save_temp_context(self, key: str, value: str):
+        """保存临时运行态重型数据（大纲、世界观、节拍器、RAG 上下文等）。"""
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
+            await db.execute('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)',
+                             (f"temp_ctx_{key}", value))
+            await db.commit()
+
+    async def get_temp_context(self, key: str, default: str = "") -> str:
+        """读取临时运行态重型数据。"""
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
+            async with db.execute('SELECT value FROM system_state WHERE key = ?', (f"temp_ctx_{key}",)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else default
+
+    # ==========================================
     # 📚 层级化摘要存储 (🌟 模块一升级)
     # ==========================================
     async def save_chapter_summary(self, chapter_num: int, summary: str):

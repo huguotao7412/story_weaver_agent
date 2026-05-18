@@ -49,13 +49,15 @@ class ChapterPlannerAgent(BaseAgent):
             )
 
         llm = get_llm(temperature=0.2)
-        world_bible = state.get("world_bible_context", "")
-        phase_chapters = state.get("current_phase_chapters", "")
 
-        raw_volume_phases = state.get("current_volume_phases", "（暂无分卷大纲）")
+        tracker = AsyncKVTracker(book_id=current_book_id)
+        await tracker.init_db()
+
+        world_bible = await tracker.get_temp_context("world_bible", "")
+        raw_volume_phases = await tracker.get_temp_context("volume_phases", "（暂无分卷大纲）")
         focused_volume_phases = get_focused_volume_phases(raw_volume_phases, current_chapter_num)
 
-        raw_phase_chapters = state.get("current_phase_chapters", "（暂无单期大纲）")
+        raw_phase_chapters = await tracker.get_temp_context("phase_chapters", "（暂无单期大纲）")
         focused_phase_chapters = get_focused_phase_chapters(raw_phase_chapters, current_chapter_num)
 
         prev_ending_text = state.get("previous_chapter_ending", "")
@@ -67,8 +69,6 @@ class ChapterPlannerAgent(BaseAgent):
         query_str = ""
 
         try:
-            tracker = AsyncKVTracker(book_id=current_book_id)
-            await tracker.init_db()
             current_map = await tracker.get_global_map()
             power_rules = await tracker.get_power_system_rules()
 
@@ -76,7 +76,7 @@ class ChapterPlannerAgent(BaseAgent):
                 rag_router_llm = get_llm(temperature=0.1)
                 rewriter_prompt = (
                     f"你是一个RAG检索路由专家。当前准备写第 {current_chapter_num} 章。\n"
-                    f"【本期大纲参考】:\n{phase_chapters}\n\n"
+                    f"【本期大纲参考】:\n{raw_phase_chapters}\n\n"
                     f"任务：请分析当前章的剧情重点，提取精准的关键词，并动态分配三层数据库的检索额度 K 值。\n"
                     f"请直接输出一个完整的 JSON 对象，不要包裹在 markdown 代码块中，不要添加任何解释性文本。"
                 )
@@ -103,7 +103,7 @@ class ChapterPlannerAgent(BaseAgent):
                 rag_engine = RAGEngine(book_id=current_book_id)
                 history_context = await asyncio.to_thread(
                     rag_engine.retrieve_context,
-                    query=phase_chapters,
+                    query=raw_phase_chapters,
                     k_global=1,
                     k_volume=2,
                     k_phase=2
@@ -158,13 +158,14 @@ class ChapterPlannerAgent(BaseAgent):
             planner_response: ChapterOutline = await self.safe_json_invoke(llm, messages, ChapterOutline)
             beat_sheet_json = json.dumps(planner_response.model_dump(), ensure_ascii=False, indent=2)
 
-            return {
-                "current_beat_sheet": beat_sheet_json,
-                "rag_history_context": history_context
-            }
+            await tracker.save_temp_context("beat_sheet", beat_sheet_json)
+            await tracker.save_temp_context("rag_history", history_context)
+
+            return {}
         except Exception as e:
             print(f"❌ [Chapter-Planner] 节拍器生成失败: {e}")
-            return {"current_beat_sheet": "（大纲生成异常，请主笔自由发挥）"}
+            await tracker.save_temp_context("beat_sheet", "（大纲生成异常，请主笔自由发挥）")
+            return {}
 
 
 @register("chapter_planner")

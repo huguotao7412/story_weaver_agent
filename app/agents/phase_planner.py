@@ -18,13 +18,12 @@ class PhasePlannerAgent(BaseAgent):
     prompt_file = "phase_planner.yaml"
 
     async def execute(self, state: dict) -> Dict[str, Any]:
-        phase_chapters = state.get("current_phase_chapters", "")
         current_chapter_num = state.get("current_chapter_num", 1)
         current_book_id = state.get("book_id", "default_book")
 
         is_new_phase = (current_chapter_num == 1) or ((current_chapter_num - 1) % 10 == 0)
 
-        if phase_chapters and phase_chapters.strip() != "" and not is_new_phase:
+        if state.get("is_phase_initialized", False) and not is_new_phase:
             return {"is_phase_initialized": True}
 
         current_volume_num = (current_chapter_num - 1) // 50 + 1
@@ -36,13 +35,14 @@ class PhasePlannerAgent(BaseAgent):
         print(f"\U0001f4d1 [Phase-Planner] 触发跨期推演！当前进入【{current_phase_name}】，正在提取本卷真实剧情碎片...", flush=True)
 
         llm = get_llm(temperature=0.2)
-        world_bible = state.get("world_bible_context", "")
-
-        raw_volume_phases = state.get("current_volume_phases", "")
-        focused_volume_phases = get_focused_volume_phases(raw_volume_phases, current_chapter_num)
 
         tracker = AsyncKVTracker(book_id=current_book_id)
         await tracker.init_db()
+
+        world_bible = await tracker.get_temp_context("world_bible", "")
+        raw_volume_phases = await tracker.get_temp_context("volume_phases", "")
+        focused_volume_phases = get_focused_volume_phases(raw_volume_phases, current_chapter_num)
+
         kv_snapshot = await tracker.get_world_bible_snapshot()
 
         prev_phases_text = "（本卷刚开始，暂无本卷的前期剧情回顾）"
@@ -78,7 +78,8 @@ class PhasePlannerAgent(BaseAgent):
                 except Exception as e:
                     pass
 
-            return {"current_phase_chapters": chapters_json, "is_phase_initialized": True}
+            await tracker.save_temp_context("phase_chapters", chapters_json)
+            return {"is_phase_initialized": True}
         except Exception as e:
             print(f"❌ [Phase-Planner] 单期大纲生成失败: {e}")
             return {"is_phase_initialized": False}

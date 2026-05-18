@@ -1,7 +1,5 @@
 # app/agents/workers/continuity_editor.py
 import os
-import json
-import asyncio
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage
@@ -18,15 +16,19 @@ class ContinuityEditorAgent(BaseAgent):
     prompt_file = "continuity_editor.yaml"
 
     async def execute(self, state: dict) -> Dict[str, Any]:
-        tracker = AsyncKVTracker(book_id=state.get("book_id", "default_book"))
+        current_book_id = state.get("book_id", "default_book")
+
+        tracker = AsyncKVTracker(book_id=current_book_id)
         await tracker.init_db()
         current_kv_state = await tracker.get_world_bible_snapshot()
+
         draft_path = state.get("draft_path", "")
         draft = ""
         if draft_path and os.path.exists(draft_path):
             with open(draft_path, "r", encoding="utf-8") as f:
                 draft = f.read()
-        beat_sheet = state.get("current_beat_sheet", "")
+
+        beat_sheet = await tracker.get_temp_context("beat_sheet", "")
         revision_count = state.get("internal_revision_count", 0)
         chapter_num = state.get("current_chapter_num", 1)
 
@@ -45,17 +47,12 @@ class ContinuityEditorAgent(BaseAgent):
 
         llm = get_llm(temperature=0.1)
         messages = self.load_prompt(kv_state=current_kv_state, draft_len=len(draft))
-        schema_str = json.dumps(EditorInternalReview.model_json_schema(), ensure_ascii=False)
         messages.append(HumanMessage(
-            content=f"【本章规定节拍器 (绝对红线)】：\n{beat_sheet}\n\n【主笔生成的正文草稿】：\n{draft}\n\n请进行严格质检。必须输出以下 JSON Schema 格式的数据：\n{schema_str}"
+            content=f"【本章规定节拍器 (绝对红线)】：\n{beat_sheet}\n\n【主笔生成的正文草稿】：\n{draft}\n\n请进行严格质检。"
         ))
 
         try:
-            print(f"⏳ [Continuity-Editor] 正在调用大模型进行质检...")
-            response = await asyncio.wait_for(llm.ainvoke(messages), timeout=180)
-
-            json_str = self.extract_json(response.content)
-            review: EditorInternalReview = EditorInternalReview.model_validate_json(json_str)
+            review: EditorInternalReview = await self.safe_json_invoke(llm, messages, EditorInternalReview)
 
             if review.status == "FAIL":
                 print(f"❌ [Continuity-Editor] 质检未通过！发现问题：{review.bug_reports}")

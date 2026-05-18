@@ -17,23 +17,23 @@ class VolumePlannerAgent(BaseAgent):
     prompt_file = "volume_planner.yaml"
 
     async def execute(self, state: dict) -> Dict[str, Any]:
-        volume_phases = state.get("current_volume_phases", "")
         current_chapter_num = state.get("current_chapter_num", 1)
         current_book_id = state.get("book_id", "default_book")
 
         current_volume_num = (current_chapter_num - 1) // 50 + 1
         is_new_volume = (current_chapter_num == 1) or ((current_chapter_num - 1) % 50 == 0)
 
-        if volume_phases and volume_phases.strip() != "" and not is_new_volume:
+        if state.get("is_volume_initialized", False) and not is_new_volume:
             return {"is_volume_initialized": True}
 
         print(f"\U0001f4dc [Volume-Planner] 触发第 {current_volume_num} 卷规划！正在提取底层状态进行软修正...", flush=True)
 
         llm = get_llm(temperature=0.3)
-        book_outline = state.get("book_outline_context", "暂无总纲")
 
         tracker = AsyncKVTracker(book_id=current_book_id)
         await tracker.init_db()
+
+        book_outline = await tracker.get_temp_context("book_outline", "暂无总纲")
         kv_snapshot = await tracker.get_world_bible_snapshot()
 
         prev_volumes_text = "（这是本书第一卷，暂无前卷剧情）"
@@ -59,7 +59,8 @@ class VolumePlannerAgent(BaseAgent):
                 except Exception as e:
                     print(f"⚠️ RAG 清理异常: {e}")
 
-            return {"current_volume_phases": phase_json, "is_volume_initialized": True}
+            await tracker.save_temp_context("volume_phases", phase_json)
+            return {"is_volume_initialized": True}
         except Exception as e:
             print(f"❌ [Volume-Planner] 分卷大纲生成失败: {e}")
             return {"is_volume_initialized": False}

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 
 from app.core.config import settings
+from app.memory.kv_tracker import AsyncKVTracker
 from app.agents.workers.style_analyzer import style_analyzer_node
 
 router = APIRouter(prefix="/novel", tags=["Novel Workflow"])
@@ -123,7 +124,9 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                     "book_id": req.thread_id
                 }
 
-                # 🌟 跨章节状态继承逻辑
+                # 🌟 跨章节状态继承：仅传递轻量标记与计数器。
+                # 重文本（大纲/世界观/节拍器/RAG上下文）由 AsyncKVTracker 持久化，
+                # 跨章自动续存，无需在此搬运。
                 old_values = {}
                 if req.chapter_num > 1:
                     prev_config = {"configurable": {"thread_id": f"{req.thread_id}_chap_{req.chapter_num - 1}"}}
@@ -133,24 +136,23 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 elif current_state and current_state.values:
                     old_values = current_state.values
 
-                # 从捞取到的历史状态中恢复关键记忆
                 if old_values:
-                    for key in ["book_outline_context", "current_volume_phases",
-                                "current_phase_chapters", "previous_chapter_ending",
-                                "recent_chapters_summary", "rag_history_context"]:
+                    for key in ["previous_chapter_ending", "recent_chapters_summary",
+                                "is_book_initialized", "is_volume_initialized", "is_phase_initialized"]:
                         if key in old_values:
                             run_input[key] = old_values[key]
 
-                    if "world_bible_context" in old_values and not req.predefined_world_bible:
-                        run_input["world_bible_context"] = old_values["world_bible_context"]
                     if "target_writing_style" in old_values and not req.target_writing_style:
                         run_input["target_writing_style"] = old_values["target_writing_style"]
 
-                # 覆盖用户在前端强制传的最新设定
-                if req.predefined_world_bible and req.predefined_world_bible.strip():
-                    run_input["world_bible_context"] = req.predefined_world_bible
                 if req.target_writing_style:
                     run_input["target_writing_style"] = req.target_writing_style
+
+                # 用户预设世界观通过 KV tracker 传递给 Book-Planner
+                if req.predefined_world_bible and req.predefined_world_bible.strip():
+                    tracker = AsyncKVTracker(book_id=req.thread_id)
+                    await tracker.init_db()
+                    await tracker.save_temp_context("world_bible", req.predefined_world_bible)
             else:
                 # 🌟 场景 B：图处于被挂起的状态 (直接唤醒)
                 run_input = None
@@ -246,7 +248,10 @@ async def receive_human_feedback(req: FeedbackRequest, request: Request):
             raise HTTPException(status_code=400, detail="当前没有被挂起的任务。")
 
         if req.target_node == "Chapter_Writer" and "Chapter_Writer" in current_state.next:
-            await storyweaver_app.aupdate_state(config, {"current_beat_sheet": req.edited_beat_sheet})
+            if req.edited_beat_sheet:
+                tracker = AsyncKVTracker(book_id=req.thread_id)
+                await tracker.init_db()
+                await tracker.save_temp_context("beat_sheet", req.edited_beat_sheet)
             return {"status": "success", "message": "大纲已确认，准备流式生成正文。"}
 
         elif req.target_node == "Human_Review" and "Human_Review" in current_state.next:

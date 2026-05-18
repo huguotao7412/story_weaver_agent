@@ -8,9 +8,9 @@ from typing import Literal
 def planner_router(state: dict) -> str:
     """智能前置大纲路由：决定每次发车时的图入口节点"""
     current_chapter_num = state.get("current_chapter_num", 1)
-    book_outline = state.get("book_outline_context", "")
+    is_initialized = state.get("is_book_initialized", False)
 
-    if not book_outline or book_outline.strip() == "":
+    if not is_initialized:
         print("🔀 [Router] 智能路由分配：新书首发 -> Book_Planner")
         return "Book_Planner"
 

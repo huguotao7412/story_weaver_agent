@@ -5,7 +5,7 @@ import asyncio
 from typing import Dict, Any, List, Literal
 
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 
 from app.agents.base import BaseAgent
 from app.core.llm_factory import get_llm
@@ -92,40 +92,22 @@ class MemoryKeeperAgent(BaseAgent):
         power_rules = await tracker.get_power_system_rules()
         active_threads_snapshot = await tracker.get_active_threads_snapshot(current_map=current_map)
 
-        schema_str = json.dumps(MemoryExtraction.model_json_schema(), ensure_ascii=False, indent=2)
-
         messages = self.load_prompt(power_system_rules=power_rules)
         messages.append(HumanMessage(
             content=(
                 f"【当前未解伏笔池】(请对照填坑)：\n{active_threads_snapshot}\n\n"
                 f"【第 {chapter_num} 章定稿正文】：\n{draft}\n\n"
-                f"请提取状态变更与伏笔。\n\n"
-                f"🚨 【强约束格式要求】：\n"
-                f"你必须且只能输出一个符合以下 JSON Schema 的 JSON 对象。请严格遵守字段名和数据类型，绝对不要遗漏必填字段：\n"
-                f"{schema_str}"
+                f"请提取状态变更与伏笔。"
             )
         ))
 
         llm = get_llm(temperature=0.1)
 
-        memory_updates = None
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                print(f"⏳ [Memory-Keeper] 正在调用大模型提取状态 (第 {attempt + 1}/{max_retries} 次)...")
-                response = await asyncio.wait_for(llm.ainvoke(messages), timeout=180)
-                json_str = self.extract_json(response.content)
-                memory_updates = MemoryExtraction.model_validate_json(json_str)
-                break
-            except Exception as e:
-                print(f"⚠️ [Memory-Keeper] 第 {attempt + 1} 次解析状态失败: {e}")
-                if attempt < max_retries - 1:
-                    messages.append(AIMessage(content="你的输出格式有误，导致 JSON 解析失败。"))
-                    messages.append(HumanMessage(
-                        content=f"这是报错信息：{str(e)}\n请检查必填字段是否遗漏，并严格遵守 JSON Schema 重新输出，不要附加任何说明文字。"))
-
-        if not memory_updates:
-            print("❌ [Memory-Keeper] 连续 3 次提取状态失败，放弃本次状态更新，强制入库防卡死。")
+        try:
+            memory_updates: MemoryExtraction = await self.safe_json_invoke(
+                llm, messages, MemoryExtraction, max_retries=3, timeout=180)
+        except Exception as e:
+            print(f"❌ [Memory-Keeper] 连续 3 次提取状态失败，放弃本次状态更新，强制入库防卡死: {e}")
             return {"human_approval_status": "PENDING", "human_feedback": ""}
 
         try:
@@ -226,13 +208,16 @@ class MemoryKeeperAgent(BaseAgent):
                 except Exception as e:
                     print(f"⚠️ [Memory-Keeper] 单卷摘要压缩失败: {e}")
 
+            # 清理本章临时上下文
+            await tracker.save_temp_context("beat_sheet", "")
+            await tracker.save_temp_context("rag_history", "")
+
             return {
                 "human_approval_status": "PENDING",
                 "human_feedback": "",
                 "previous_chapter_ending": prev_ending,
                 "recent_chapters_summary": rolling_summary,
                 "revision_history": [],
-                "current_beat_sheet": "",
                 "draft_path": ""
             }
 
@@ -245,7 +230,6 @@ class MemoryKeeperAgent(BaseAgent):
                 "previous_chapter_ending": fallback_ending,
                 "recent_chapters_summary": fallback_summary,
                 "revision_history": [],
-                "current_beat_sheet": "",
                 "draft_path": "",
                 "human_approval_status": "PENDING",
                 "human_feedback": ""
