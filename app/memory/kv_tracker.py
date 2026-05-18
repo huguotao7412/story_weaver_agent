@@ -73,6 +73,92 @@ class AsyncKVTracker:
                              (name, json.dumps(char_data, ensure_ascii=False)))
             await db.commit()
 
+    async def batch_update_character_states(self, updates: list[dict]):
+        """
+        批量更新角色状态，极大地减少数据库连接与提交次数。
+        为了防止同一批次内对同一个角色多次更新造成数据相互覆盖，引入了内存字典缓存。
+        updates 格式示例: [{"name": "张三", "key": "level", "value": "筑基", "chapter_num": 10}, ...]
+        """
+        if not updates:
+            return
+
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
+            # 1. 建立内存缓存，避免同一批次内的脏读
+            char_cache = {}
+
+            # 2. 遍历合并更新
+            for update in updates:
+                name = update["name"]
+                key = update["key"]
+                value = update["value"]
+                chapter_num = update["chapter_num"]
+
+                # 如果缓存里没有，才去数据库查
+                if name not in char_cache:
+                    async with db.execute('SELECT data FROM characters WHERE name = ?', (name,)) as cursor:
+                        row = await cursor.fetchone()
+                        char_cache[name] = json.loads(row[0]) if row else {"name": name, "is_core": False}
+
+                # 3. 在内存中应用更新（无论同一个角色这回合更新多少次，都在内存叠加）
+                char_cache[name][key] = value
+                char_cache[name][f"last_updated_ch_{key}"] = chapter_num
+
+            # 4. 准备批量写入的数据 tuples
+            insert_data = [
+                (name, json.dumps(data, ensure_ascii=False))
+                for name, data in char_cache.items()
+            ]
+
+            # 5. 一次性批量执行并提交 (O(1) 的连接开销)
+            await db.executemany('INSERT OR REPLACE INTO characters (name, data) VALUES (?, ?)', insert_data)
+            await db.commit()
+
+    async def batch_update_inventory(self, updates: list[dict]):
+        """
+        批量更新物品流转。
+        updates 格式: [{"owner": "李四", "item_name": "长剑", "action": "ADD", "chapter_num": 10}, ...]
+        """
+        if not updates:
+            return
+
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
+            for update in updates:
+                owner = update["owner"]
+                item_name = update["item_name"]
+                action = update["action"]
+                chapter_num = update["chapter_num"]
+
+                if action.upper() == "ADD":
+                    async with db.execute('SELECT id FROM inventory WHERE owner = ? AND item_name = ?',
+                                          (owner, item_name)) as cursor:
+                        if not await cursor.fetchone():
+                            await db.execute(
+                                'INSERT INTO inventory (owner, item_name, acquired_in_chapter) VALUES (?, ?, ?)',
+                                (owner, item_name, chapter_num))
+                elif action.upper() == "REMOVE":
+                    await db.execute('DELETE FROM inventory WHERE owner = ? AND item_name = ?', (owner, item_name))
+
+            # 所有物品更新完后，只需提交一次事务
+            await db.commit()
+
+    async def batch_add_unresolved_threads(self, threads_data: list[dict], chapter_num: int):
+        """批量挖坑（新增伏笔悬念）"""
+        if not threads_data:
+            return
+
+        insert_data = [
+            (t["content"], t.get("priority", "Medium"),
+             json.dumps(t.get("keywords", []), ensure_ascii=False),
+             t.get("related_map", "未知"), chapter_num)
+            for t in threads_data
+        ]
+
+        async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
+            await db.executemany(
+                'INSERT INTO threads (content, priority, keywords, related_map, created_in_chapter) VALUES (?, ?, ?, ?, ?)',
+                insert_data)
+            await db.commit()
+
     async def update_inventory(self, owner: str, item_name: str, action: str, chapter_num: int):
         async with aiosqlite.connect(self.db_path, timeout=15.0) as db:
             if action.upper() == "ADD":

@@ -63,11 +63,15 @@ class BaseAgent(ABC):
                 if attempt < max_retries - 1:
                     messages_to_send.append(HumanMessage(content="上次调用超时，请直接输出符合要求的 JSON。"))
             except Exception as e:
-                print(f"[{self.name}] 第 {attempt + 1} 次推演失败: {e}", flush=True)
-                if attempt < max_retries - 1:
-                    messages_to_send.append(AIMessage(content=f"生成中断或结构化解析失败。"))
-                    messages_to_send.append(HumanMessage(
-                        content=f"请严格按照之前要求的 JSON Schema 重新输出。报错细节: {str(e)}"
-                    ))
+                    print(f"[{self.name}] 第 {attempt + 1} 次推演失败: {e}", flush=True)
+                    if attempt < max_retries - 1:
+                        messages_to_send.append(AIMessage(content=f"生成中断或结构化解析失败。"))
+                        messages_to_send.append(HumanMessage(
+                            content=f"请严格按照之前要求的 JSON Schema 重新输出。报错细节: {str(e)}"
+                        ))
+                        # 🌟 修复：加入指数退避等待，避免重试雪崩 (2秒, 4秒...)
+                        sleep_time = 2 ** (attempt + 1)
+                        print(f"[{self.name}] 触发防雪崩机制，休眠 {sleep_time} 秒后重试...", flush=True)
+                        await asyncio.sleep(sleep_time)
 
         raise ValueError(f"[{self.name}] 在 {max_retries} 次重试后仍然失败")

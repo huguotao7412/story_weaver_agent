@@ -136,7 +136,8 @@ class RAGEngine:
         self.global_store = self._load_store(self.global_dir)
         self.volume_store = self._load_store(self.volume_dir)
         self.phase_store = self._load_store(self.phase_dir)
-
+        #实例级 IO 读写锁，保护 FAISS 持久化
+        self._io_lock = threading.Lock()
         self._initialized = True
 
         # 🌟 初始化时预热构建一次缓存
@@ -186,20 +187,23 @@ class RAGEngine:
         split_docs = self.text_splitter.split_documents(documents)
 
         # 1. 持久化更新 FAISS
-        if store is None:
-            store = FAISS.from_documents(split_docs, self.embeddings)
-        else:
-            store.add_documents(split_docs)
-        self._save_store(store, path)
+        with self._io_lock:
+            if store is None:
+                store = FAISS.from_documents(split_docs, self.embeddings)
+            else:
+                store.add_documents(split_docs)
+            self._save_store(store, path)
 
-        # 2. 内存级别极速增量更新 BM25（加锁保护，防止竞态导致文档丢失）
         bm25_cache_key = f"{self.book_id}_{cache_key}"
-        with GLOBAL_BM25_CACHE.lock:
-            bm25_obj = GLOBAL_BM25_CACHE.cache.get(bm25_cache_key)
-            if bm25_obj is None:
-                bm25_obj = IncrementalBM25()
-                GLOBAL_BM25_CACHE.cache[bm25_cache_key] = bm25_obj
-            bm25_obj.add_documents(split_docs)
+
+        # 使用自定义的 get 和 put 方法，不要直接操作 .cache 字典
+        bm25_obj = GLOBAL_BM25_CACHE.get(bm25_cache_key)
+        if bm25_obj is None:
+            bm25_obj = IncrementalBM25()
+            GLOBAL_BM25_CACHE.put(bm25_cache_key, bm25_obj)
+
+        bm25_obj.add_documents(split_docs)
+
         return store
 
     # ==========================================

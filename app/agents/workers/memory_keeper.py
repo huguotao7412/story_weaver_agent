@@ -111,30 +111,51 @@ class MemoryKeeperAgent(BaseAgent):
             return {"human_approval_status": "PENDING", "human_feedback": ""}
 
         try:
+            # 1. 跨地图检测
             if memory_updates.map_update.has_changed and memory_updates.map_update.new_map_name:
                 await tracker.set_global_map(memory_updates.map_update.new_map_name)
                 print(f"   [🗺️ 换地图触发] 主角跨越大地图至: {memory_updates.map_update.new_map_name}")
 
+            # 2. 批量处理角色更新
+            char_updates_payload = []
             for cu in memory_updates.character_updates:
-                if cu.is_core: await tracker.set_core_character(cu.name, is_core=True)
-                await tracker.update_character_state(cu.name, cu.key, cu.value, chapter_num)
+                    if cu.is_core:
+                        await tracker.set_core_character(cu.name, is_core=True)
+                    char_updates_payload.append({
+                        "name": cu.name, "key": cu.key,
+                        "value": cu.value, "chapter_num": chapter_num
+                    })
+            if char_updates_payload:
+                    await tracker.batch_update_character_states(char_updates_payload)
 
+            # 3. 批量处理物品更新
+            inventory_updates_payload = []
             for iu in memory_updates.item_updates:
-                await tracker.update_inventory(iu.owner, iu.item_name, iu.action, chapter_num)
+                    inventory_updates_payload.append({
+                        "owner": iu.owner, "item_name": iu.item_name,
+                        "action": iu.action, "chapter_num": chapter_num
+                    })
+            if inventory_updates_payload:
+                    await tracker.batch_update_inventory(inventory_updates_payload)
 
+            # 4. 批量处理新伏笔 (挖坑)
+            threads_payload = []
             for mystery in memory_updates.new_mysteries:
-                mystery_dict = mystery.model_dump()
-                await tracker.add_unresolved_thread(mystery_dict, chapter_num)
-                print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨 [{mystery_dict['priority']}]: {mystery_dict['content']}")
+                    threads_payload.append(mystery.model_dump())
+                    print(f"   [🕳️ 挖坑登记] 发现新悬念/仇恨 [{mystery.priority}]: {mystery.content}")
+            if threads_payload:
+                    await tracker.batch_add_unresolved_threads(threads_payload, chapter_num)
 
+            # 5. 填坑依然用循环 (因为一般单章填坑数量极少，且依赖ID删除，开销可控)
             for resolved in memory_updates.resolved_mysteries:
-                await tracker.remove_resolved_thread(resolved.thread_id)
-                print(f"   [✨ 填坑完成] 尝试解决伏笔 [ID: {resolved.thread_id}]。原因: {resolved.reason}")
+                    await tracker.remove_resolved_thread(resolved.thread_id)
+                    print(f"   [✨ 填坑完成] 尝试解决伏笔 [ID: {resolved.thread_id}]。原因: {resolved.reason}")
 
+            # 6. 世界观补丁 (同上，频率极低)
             for patch in memory_updates.world_rule_updates:
-                patch_dict = patch.model_dump()
-                await tracker.append_world_rule_patch(patch_dict)
-                print(f"   [📜 设定进化] 捕获世界观补丁 [{patch_dict['category']}]: {patch_dict['rule_name']}")
+                    patch_dict = patch.model_dump()
+                    await tracker.append_world_rule_patch(patch_dict)
+                    print(f"   [📜 设定进化] 捕获世界观补丁 [{patch_dict['category']}]: {patch_dict['rule_name']}")
 
             rag_engine = RAGEngine(book_id=current_book_id)
             if memory_updates.global_events:

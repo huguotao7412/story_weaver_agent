@@ -178,13 +178,19 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                         raise e  # 抛出真实异常以便外层捕获
                 else:
                     # 超时未完成，跳过本轮避免 chunk 未定义或重复处理旧值
+                    yield ": keep-alive\n\n"
                     continue
 
                 # 兼容 LangGraph 各种版本的 chunk 格式
-                if len(chunk) == 3:
-                    _, mode, payload_data = chunk
-                else:
-                    mode, payload_data = chunk
+                mode, payload_data = None, None
+                if isinstance(chunk, tuple):
+                    if len(chunk) == 3:  # (namespace, mode, payload)
+                        _, mode, payload_data = chunk
+                    elif len(chunk) == 2:  # (mode, payload)
+                        mode, payload_data = chunk
+                elif isinstance(chunk, dict):
+                    # 极个别情况下的 fallback
+                    continue
 
                 if mode == "messages":
                     # 实时捕获主笔的打字流推送给前端
