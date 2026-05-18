@@ -107,6 +107,7 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
     config = {"configurable": {"thread_id": graph_thread_id}}
 
     async def event_generator():
+        pending_task = None
         try:
             storyweaver_app = request.app.state.storyweaver_app
 
@@ -155,7 +156,6 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 run_input = None
 
             stream_iter = storyweaver_app.astream(run_input, config=config, stream_mode=["updates", "messages"])
-            pending_task = None
 
             while True:
                 # 如果没有挂起的任务，则创建一个新的获取任务
@@ -218,6 +218,11 @@ async def generate_novel_stream(req: GenerateRequest, request: Request):
                 elif "Human_Review" in new_state.next:
                     yield "data: {\"status\": \"PAUSED_FOR_HUMAN_REVIEW\"}\n\n"
 
+        except asyncio.CancelledError:
+            print("⚠️ [Server] 客户端主动断开连接，正在清理挂起的生成任务...")
+            if pending_task and not pending_task.done():
+                pending_task.cancel()
+            raise
         except Exception as e:
             # 🌟 核心监控：红色醒目报错 + 完整堆栈，拒绝静默崩溃
             print(f"❌ [Server Stream Error] 后端流式服务发生严重异常: {e}", flush=True)

@@ -33,24 +33,11 @@ edges:
 
 conditional_routes:
   planner_router:
-    conditions:
-      - check: "not book_outline_context"
-        target: Book_Planner
-      - check: "(current_chapter_num - 1) % 50 == 0"
-        target: Volume_Planner
-      - check: "(current_chapter_num - 1) % 10 == 0"
-        target: Phase_Planner
-      - default: Chapter_Planner
+    targets: [Book_Planner, Volume_Planner, Phase_Planner, Chapter_Planner]
   editor_router:
-    conditions:
-      - check: "editor_comments == 'FAIL'"
-        target: Chapter_Writer
-      - default: Human_Review
+    targets: [Chapter_Writer, Human_Review]
   human_review_router:
-    conditions:
-      - check: "human_approval_status == 'APPROVED'"
-        target: Memory_Keeper
-      - default: Chapter_Writer
+    targets: [Memory_Keeper, Chapter_Writer]
 
 interrupt_before:
   - Chapter_Writer

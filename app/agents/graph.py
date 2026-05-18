@@ -60,20 +60,13 @@ def build_workflow() -> StateGraph:
         target = END if to_node == "END" else to_node
         workflow.add_edge(from_node, target)
 
-    # Build conditional edges from YAML config
+    # Build conditional edges from YAML config.
+    # The YAML only declares topology (targets); actual routing logic lives in routers.py.
     conditional_routes = config.get("conditional_routes", {})
     for route_name, route_def in conditional_routes.items():
         router_fn = _ROUTER_FUNCTIONS[route_name]
         source_node = _ROUTE_SOURCE_NODES[route_name]
-
-        # Collect all possible target nodes from conditions and default
-        targets = {}
-        for cond in route_def.get("conditions", []):
-            if "default" in cond:
-                targets[cond["default"]] = cond["default"]
-            else:
-                targets[cond["target"]] = cond["target"]
-
+        targets = {t: t for t in route_def["targets"]}
         workflow.add_conditional_edges(source_node, router_fn, targets)
 
     return workflow

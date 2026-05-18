@@ -25,46 +25,49 @@ class IncrementalBM25:
         self.total_length = 0
         self.corpus_term_freqs = []
         self.docs = []
+        self._lock = threading.Lock()
 
     def add_documents(self, docs):
         """增量写入，只累加词频，不做全量矩阵重构"""
-        for doc in docs:
-            tokens = list(jieba.cut(doc.page_content))  # 中文分词，词级别切分
-            length = len(tokens)
-            self.docs.append(doc)
-            self.doc_lengths.append(length)
-            self.total_length += length
-            self.N += 1
+        with self._lock:
+            for doc in docs:
+                tokens = list(jieba.cut(doc.page_content))  # 中文分词，词级别切分
+                length = len(tokens)
+                self.docs.append(doc)
+                self.doc_lengths.append(length)
+                self.total_length += length
+                self.N += 1
 
-            term_freq = Counter(tokens)
-            self.corpus_term_freqs.append(term_freq)
-            for term in term_freq.keys():
-                self.doc_freqs[term] += 1
+                term_freq = Counter(tokens)
+                self.corpus_term_freqs.append(term_freq)
+                for term in term_freq.keys():
+                    self.doc_freqs[term] += 1
 
     def get_top_n(self, query_tokens, n=5):
         """即时计算 IDF 与 TF，返回高分文档"""
-        if self.N == 0: return []
-        avgdl = self.total_length / self.N
-        scores = []
-        for i in range(self.N):
-            score = 0
-            doc_len = self.doc_lengths[i]
-            term_freqs = self.corpus_term_freqs[i]
-            for q in query_tokens:
-                if q not in term_freqs: continue
-                # 动态计算 IDF
-                nq = self.doc_freqs.get(q, 0)
-                idf = math.log((self.N - nq + 0.5) / (nq + 0.5) + 1)
-                # 动态计算 TF
-                tf = term_freqs[q]
-                numerator = tf * (self.k1 + 1)
-                denominator = tf + self.k1 * (1 - self.b + self.b * (doc_len / avgdl))
-                score += idf * (numerator / denominator)
-            if score > 0:
-                scores.append((score, self.docs[i]))
+        with self._lock:
+            if self.N == 0: return []
+            avgdl = self.total_length / self.N
+            scores = []
+            for i in range(self.N):
+                score = 0
+                doc_len = self.doc_lengths[i]
+                term_freqs = self.corpus_term_freqs[i]
+                for q in query_tokens:
+                    if q not in term_freqs: continue
+                    # 动态计算 IDF
+                    nq = self.doc_freqs.get(q, 0)
+                    idf = math.log((self.N - nq + 0.5) / (nq + 0.5) + 1)
+                    # 动态计算 TF
+                    tf = term_freqs[q]
+                    numerator = tf * (self.k1 + 1)
+                    denominator = tf + self.k1 * (1 - self.b + self.b * (doc_len / avgdl))
+                    score += idf * (numerator / denominator)
+                if score > 0:
+                    scores.append((score, self.docs[i]))
 
-        scores.sort(key=lambda x: x[0], reverse=True)
-        return [doc for score, doc in scores[:n]]
+            scores.sort(key=lambda x: x[0], reverse=True)
+            return [doc for score, doc in scores[:n]]
 
 
 class ThreadSafeLRUCache:
